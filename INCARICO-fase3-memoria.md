@@ -69,6 +69,30 @@ Vale lo stesso tetto di `cerca` (~1400 caratteri): il Mac maneggia handle, non
 contenuti. Guarda come `strumenti.py` comprime le pagine web — la compressione
 estrattiva senza LLM li' ha funzionato meglio del riassunto con modello.
 
+**Come fondere i tre archivi: Reciprocal Rank Fusion.** Il fan-out produce tre
+elenchi ordinati con punteggi che **non sono confrontabili** fra loro — una
+distanza coseno di pgvector e un punteggio full-text non stanno sulla stessa
+scala, e normalizzarli a mano e' il punto in cui la ricerca ibrida di solito si
+rompe. RRF risolve ignorando i punteggi e usando solo la **posizione**:
+
+```python
+punteggio(doc) = somma su ogni elenco di  1 / (k + posizione(doc))   # k ~ 60
+```
+
+Venti righe, nessuna dipendenza, nessuna taratura per archivio. Va misurato
+contro l'alternativa banale (concatenare e troncare) sul collaudo sintetico.
+
+Riferimento esterno, guardato il 16 agosto 2026: **SurfSense**
+(`github.com/MODSetter/SurfSense`, Apache 2.0 tranne `app/proprietary/` che e'
+BSL 1.1 e da cui **non si prende niente**) fa esattamente questo — pgvector piu'
+full-text fusi con RRF, sopra Postgres e Redis, cioe' lo stesso stack prescritto
+qui. Non si adotta: e' un'applicazione da sette servizi con la sua interfaccia
+web, e vuole essere il cervello, che qui e' il Mac. Ma la sua esistenza dice che
+l'architettura scelta e' quella giusta, e il suo **RAG a due livelli**
+(riassunto per documento + embedding per chunk) e' la stessa cosa che
+`PIANO-DOCUMENTI.md` chiama "il Mac vede una sintesi da ~300 token e un handle":
+ci sono arrivati per accuratezza, noi per il prefill.
+
 ## Cosa fa `salva`
 
 Scrive una nota o registra un fatto, e **risponde dove l'ha messo**. La

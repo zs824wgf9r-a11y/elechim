@@ -26,19 +26,85 @@ Tutto il progetto e la documentazione sono in italiano. Scrivi in italiano.
   packet.** Col fisso addormentato Elechim continua a rispondere, senza ricerca
   web, vocali e immagini.
 
-## Stato al 15 agosto 2026
+## Stato al 15 agosto 2026, sera — verificato dopo un blackout
 
-- Fase 0 ambiente ✅ · 1 bot+loop ✅ · 2 gateway+ricerca web ✅ · **3 Honcho+embedding ❌ · 4 PDF/OCR ❌ · 5 Obsidian ❌**
-- Ultima modifica al codice: 12 agosto (`strumenti.py`).
-- Servizi attivi e verificati: `elechim-gateway`, `macmini-tunnel`, `searxng`,
-  `ollama`. In ollama c'e' **solo `qwen3-vl:4b`**: `bge-m3` non e' ancora stato
-  scaricato.
+**Questa sezione mente appena si lavora. Chi la trova sbagliata la riscrive
+prima di consegnare**: e' la fotografia da cui parte ogni altra sessione, e una
+fotografia vecchia moltiplica gli errori invece di risparmiare tempo. Fino a
+stasera diceva "fase 4 ❌, il vault e' vuoto" con 233 note gia' dentro.
+
+- Fase 0 ambiente ✅ · 1 bot+loop ✅ · 2 gateway+ricerca web ✅ ·
+  **3 Honcho+embedding ❌ · 4 documenti: corsia veloce ✅, resto ❌ · 5 Obsidian ✅ (per i documenti)**
+- **La fase 4 corsia veloce e' in esercizio.** `documenti.py` porta un PDF con
+  livello di testo dalla coda fino alle note, deterministico, senza LLM:
+  `DSML.pdf` **533 pagine in 70s**, 223 voci di outline, `struttura: outline`.
+  Nel vault ci sono **233 note** in `30-Note/` e 5 documenti in `20-Documenti/`.
+- **Il repo e' pubblico**: `github.com/zs824wgf9r-a11y/elechim`, un commit,
+  `.gitignore` verificato, i `.example` di ogni chiave, README con Installazione.
+  Vedi la trappola della depersonalizzazione qui sotto.
+- **crawl4ai e' attivo** (quadlet podman su `127.0.0.1:11235`), davanti alla
+  corsia statica `requests`+`trafilatura` che resta come ripiego.
+- Servizi attivi e verificati stasera dopo un riavvio da blackout, tutti risaliti
+  da soli: `elechim-gateway` (`127.0.0.1:8090`), `macmini-tunnel`, `searxng`,
+  `crawl4ai`, `syncthing`, `elechim-documenti.path`, il bot sul Mac via launchd.
+- **ollama non e' un servizio systemd** e il binario non e' nel PATH di una shell
+  non interattiva: risponde su `127.0.0.1:11434` e basta. C'e' **solo
+  `qwen3-vl:4b`**; `bge-m3` non e' stato scaricato.
 - Niente Postgres, niente Redis, niente pgvector: la fase 3 non e' iniziata.
-- `~/Obsidian` e' **vuoto**, tutte e sei le cartelle. `documenti/` e `markdown/`
-  vuote, manca `documenti/in/`.
+- `40-Skills/`, `10-Ricerche/` e `90-Allegati/` sono **vuote**: le figure non
+  vengono ancora estratte, e `50-Elaborazioni/` non esiste.
 - Il venv e' `.venv`, **Python 3.12** creato con uv: **non ha `pip`**, si usa
   `uv pip install`. Il Python di sistema e' 3.14, troppo nuovo per lo stack ML.
   Non ci sono ne' `torch` ne' `marker`. 784GB liberi su `/home`.
+
+### Riparato la sera del 15 agosto — `prova_documenti.py` e' TUTTO VERDE
+
+- **La coda si fermava** per una corsa fra il servizio e il path unit che lo fa
+  ripartire: ora c'e' `_coda_esclusiva()` (`flock` non bloccante, chi arriva
+  secondo esce **0**) e `_scarta()` non presume piu' che il file sia in coda.
+- **Le pagine duplicate nell'integrale erano lo stesso difetto**, non uno nuovo:
+  due processi che scrivevano lo stesso markdown. Nessuna modifica a
+  `genera_markdown`. Verificare contando le **occorrenze**, non i marcatori
+  distinti — che tornano 11/11 e hanno gia' fatto dichiarare risolto il difetto
+  due volte.
+- **Tabelle**: aggiunta una densita' minima di cifre. Falsi positivi su
+  `Basic_Statistics_2007.pdf` **da 42 a 13**.
+- **Scansioni**: `classifica()` piu' rifiuto onesto sotto 100 caratteri/pagina di
+  mediana, con la ragione scritta in `falliti/`. Il rapporto dichiara la corsia.
+
+### Cosa manca adesso
+
+- **La sbobina e' scritta ma non consegnata.** `sbobina.py` + `prova_sbobina.py`,
+  collaudo **verde** sul sintetico: 6 sezioni su 6, `qwen3:8b` a 13 tok/s, 6.751
+  MiB di VRAM, tabelle verbatim, numeri verificati, lock GPU rispettato.
+  Mancano il confronto fra piu' modelli, una nota vera su `dsml` e
+  `RAPPORTO-sbobina.md`. **Non lanciare le 214 sezioni** prima che il
+  proprietario abbia letto una nota.
+- **Le figure non vengono estratte**, `90-Allegati/` e' vuota.
+- Le note atomiche nel vault sono ancora quelle vecchie, coi segnalibri.
+
+### La trappola della depersonalizzazione — pagata il 15 agosto
+
+Rendere il repo pubblico ha sostituito il nome proprio con "il proprietario" e i
+path con `NOME_UTENTE` **anche dentro file che girano**, non solo nella prosa.
+Due danni veri, trovati stasera:
+
+- **`mac/core.py`**: il `SYSTEM_PROMPT` versionato diceva "assistente personale
+  del proprietario", mentre il Mac in esercizio usava il nome vero.
+  `./sincronizza.sh` avrebbe spinto la versione depersonalizzata sul Mac: prompt
+  peggiore (il nome e' un dato che serve al modello) **e** prefisso del contesto
+  cambiato, cioe' prefill pieno su tutte le conversazioni. Risolto leggendo
+  `PROPRIETARIO` da `mac/.env`, che non e' versionato: col valore a posto il
+  prompt torna byte per byte quello di prima e la cache non si accorge di nulla.
+- **`opencode.json`**: `/home/NOME_UTENTE/.config/containers/systemd/*` non
+  agganciava piu' nessun permesso reale. Risolto con `{env:HOME}`, che e'
+  neutro e funziona ovunque.
+
+**Regola**: un file eseguibile non si depersonalizza in place. O il dato si
+legge da `.env`, o la copia pubblica e' distinta da quella che gira.
+
+`DEFINIZIONI` invece e' **intatta e identica** fra `strumenti.py` e
+`mac/strumenti.py`, verificato con confronto AST: due tool, `cerca` e `leggi`.
 
 ## Le sette regole, e perche'
 

@@ -1,5 +1,9 @@
 # Incarico: crawl4ai al posto della corsia statica
 
+> **CONSEGNATO il 15 agosto 2026.** Il container gira su `127.0.0.1:11235`,
+> la corsia statica `requests`+`trafilatura` e' rimasta come ripiego, e la
+> lezione e' nel README ("crawl4ai davanti, statico dietro").
+
 Scritto il 15 agosto 2026. Deciso dal proprietario. **Non iniziare finche' la fase 4
 non e' consegnata.** Leggi prima `AGENTS.md`.
 

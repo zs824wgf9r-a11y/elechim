@@ -1,5 +1,10 @@
 # Incarico: fase 4, corsia veloce
 
+> **CONSEGNATO il 15 agosto 2026**, primo e secondo giro. La catena gira in
+> esercizio: `DSML.pdf` 533 pagine in 70s. **Restano aperti** i falsi positivi
+> sulle tabelle (punto 1 del secondo giro), che sono passati a
+> `INCARICO-tabelle-e-scansioni.md` insieme alla riproduzione sul sintetico.
+
 Scritto il 15 agosto 2026. Leggi prima `AGENTS.md` e `PIANO-DOCUMENTI.md`.
 Questo file restringe il piano a cio' che va costruito **adesso**, e corregge un
 punto del piano che si e' rivelato sbagliato alla prova.

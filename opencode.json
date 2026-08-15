@@ -4,7 +4,7 @@
   "permission": {
     "external_directory": {
       "*": "ask",
-      "/home/NOME_UTENTE/.config/containers/systemd/*": "allow",
+      "{env:HOME}/.config/containers/systemd/*": "allow",
       "/tmp/*": "allow"
     }
   }

@@ -1,5 +1,14 @@
 # Incarico: macinare qualsiasi documento
 
+> **APERTO, rimisurato il 15 agosto 2026 sera.** Il punto 1 (duplicazione) **non
+> e' risolto**: `markdown/prova-due-colonne.md` ha ancora 18 marcatori per 11
+> pagine, `{5:2, 6:2, 7:2, 8:2, 9:2, 10:2, 11:2}`. Attenzione a come si
+> verifica: contare i marcatori **distinti** torna sempre 11/11 e non puo'
+> vedere il difetto — l'asserzione buona conta le **occorrenze**, ed e' gia' in
+> `test_interruzione`, ma il collaudo si ferma prima sul rosso delle tabelle.
+> Il punto 2 e' passato a **`INCARICO-tabelle-e-scansioni.md`**, in lavorazione.
+> Docling e gli appunti a mano restano da fare.
+
 Scritto il 15 agosto 2026. Leggi prima `AGENTS.md` e `PIANO-DOCUMENTI.md`.
 Il proprietario ha posto il criterio: **deve macinare qualsiasi PDF, nota e quant'altro.**
 Oggi non e' vero, e questo incarico chiude il divario in tre passi, in

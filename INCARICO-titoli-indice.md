@@ -1,5 +1,10 @@
 # Incarico: titoli e indice dall'indice del PDF
 
+> **CONSEGNATO il 15 agosto 2026.** L'outline del PDF e' la fonte primaria:
+> `DSML.pdf` da' 223 voci, `struttura: outline`, e le note si chiamano
+> `DSML 10.1 Vector Spaces, Bases, and Matrices` come proposto. Il ripiego
+> font-size funziona ancora sul sintetico.
+
 Riscritto il 15 agosto 2026 dopo una scoperta che cambia l'approccio. Leggi
 prima `AGENTS.md`. **Questo viene prima della sbobina**: riscrivere
 magnificamente una sezione intitolata `reface` non serve a niente.

@@ -82,6 +82,8 @@ dall'altra.
 | `visione.py` | fisso | descrizione e OCR delle immagini |
 | `energia.py` | fisso | sospensione, VRAM contesa col gioco, risveglio |
 | `sospendi.py` | fisso | il controllo periodico che decide se dormire |
+| `documenti.py` | fisso | la corsia veloce: PDF -> markdown integrale -> note su Obsidian |
+| `prova_documenti.py` | fisso | il collaudo dei documenti, su PDF sintetici generati da lui |
 | `mac/risveglio.py` | Mac | il magic packet che sveglia il fisso |
 
 ## Perche' e' scritto cosi'
@@ -392,11 +394,128 @@ rifiuto immediato sulla 8090 e' gia' la prova che il fisso non c'e', quindi
   carrier non cade, che e' un motivo in piu' per sospendere invece di spegnere.
 - Il risveglio da S3 sono pochi secondi contro **1m32s** di avvio completo.
 
+## Documenti: la corsia veloce (fase 4)
+
+Un PDF con livello di testo va da `documenti/in/` alle note di Obsidian senza
+che nessun modello tocchi il contenuto. `documenti.py`, poppler, deterministico.
+Misura del 15 agosto: **`DSML.pdf`, 533 pagine, 70 secondi**, 223 sezioni.
+
+La catena: coda sorvegliata -> estrazione integrale in `markdown/<slug>.md`
+(fuori dal vault, con ancore `<!-- pag N -->`) -> sezionamento -> nota indice in
+`20-Documenti/<slug>/` e una nota atomica per sezione in `30-Note/` -> rapporto
+di copertura. L'integrale e' la verita', le note sono l'indice: se una nota e'
+imprecisa, il testo e' a un link di distanza.
+
+Le note si chiamano `DSML 10.1 Vector Spaces, Bases, and Matrices`, con gli
+`aliases` nel frontmatter per la ricerca. In Obsidian il nome del file **e'** il
+titolo che vedi, e il progressivo di pipeline li' dentro non ci va.
+
+### Le quattro lezioni, con la misura
+
+**1. `-layout` rovina la prosa a due colonne.** Il piano prescriveva
+`pdftotext -layout`. Su un documento a due colonne affianca le colonne riga per
+riga e produce prosa illeggibile:
+
+```
+$ pdftotext -layout -f 1 -l 1 Basic_Statistics_2007.pdf
+Statistics is a relatively new science with         scribing the information being studied. Ran-
+most of the important developments occurring        dom variables can be further described by the
+```
+
+Ma `-layout` **serve** per le tabelle, che sono l'unica cosa che tiene allineate
+le colonne di numeri. Quindi si usano **tutte e due**, scelte per regione: prosa
+senza `-layout` (ordine di lettura), tabelle con.
+
+**2. Il documento contiene gia' il proprio indice, e batte qualsiasi euristica.**
+Stavamo ricostruendo la struttura dal corpo dei font. Non serviva: `pypdf` legge
+l'outline incorporato e su `DSML.pdf` da' **223 voci, 223 risolte a una pagina,
+0 fallimenti**, con titoli esatti e gerarchia gia' annidata su tre livelli.
+
+Tutti i difetti su cui stavamo lavorando erano artefatti del ricostruire a
+occhio una cosa gia' dichiarata: `Preface` letto come `reface` (tipografia a
+maiuscoletto, iniziale e resto come due elementi con `top` diverso di pochi
+pixel), le dediche promosse a sezione, i frammenti. Con l'outline **spariscono
+tutti insieme**. Il ripiego font-size resta per i PDF che l'indice non ce
+l'hanno, e il campo `struttura` nel rapporto dichiara quale dei due ha lavorato.
+
+**3. La coda vuole un lock, perche' il path unit le corre addosso.**
+`elechim-documenti.path` sorveglia `documenti/in/*.pdf` e il servizio svuota
+proprio quella cartella spostando i file che finisce: la condizione cambia
+mentre il lavoro e' in corso, e systemd fa ripartire il servizio sopra quello
+vivo. Successo il 15 agosto, **due processi nello stesso secondo**: il secondo
+ha fatto `glob()` su una lista che il primo stava svuotando e si e' ritrovato il
+PDF sparito a meta' elaborazione, dentro `pdfinfo`.
+
+Il rimedio e' `flock` non bloccante in `_coda_esclusiva`: chi arriva secondo
+esce con **codice 0**, perche' non e' un guasto. `energia.blocco` non serviva
+allo scopo — scrive il proprio PID sopra quello di chi c'era, visto che il suo
+mestiere e' tenere sveglio il fisso, non escludere.
+
+E il gestore d'errore aveva lo stesso difetto al contrario: spostava in
+`falliti/` un file che `processa` aveva gia' portato in `elaborati/`, e quel
+secondo `FileNotFoundError` partiva da dentro il gestore, dove non lo prendeva
+nessuno. Il servizio usciva 1 e **la coda si fermava per il guasto che quel
+gestore esiste per evitare**. Adesso `_scarta` controlla prima, e scrive accanto
+al file la ragione per cui ci e' finito.
+
+**4. Due sintomi lontani, una causa sola.** `markdown/prova-due-colonne.md`
+conteneva **18 marcatori di pagina per 11 pagine**, le pagine 5-11 scritte due
+volte. Sembrava un difetto di idempotenza nella ripresa — `genera_markdown`
+riparte da `ultima = max(pagine gia' presenti)` — ed e' stato cercato li' per un
+po'. Non era li'.
+
+Era **la stessa corsa** di sopra vista dall'altro capo: il collaudo scriveva i
+PDF in `documenti/in/` senza prendere il lock, il path unit faceva partire il
+servizio in parallelo, e due processi scrivevano lo stesso markdown. Le pagine
+non erano riscritte da una ripresa difettosa: erano scritte **due volte da due
+processi diversi**. Risolte insieme, senza toccare `genera_markdown`.
+
+Lo stesso vale per il collaudo rosso sulle tabelle: `tabelle_conservate == 2`
+sul sintetico non era il rilevatore che sbagliava, era la **pagina duplicata**
+contata due volte. Un difetto di concorrenza si presenta lontano da dove sta.
+
+**Il modo sbagliato di verificarlo**, che ha fatto dichiarare risolto il difetto
+due volte: contare i marcatori **distinti** e confrontarli con le pagine. Torna
+sempre 11 su 11 e non puo' vedere nulla. L'asserzione giusta conta le
+**occorrenze**: `md.count("<!-- pag ") == pagine_totali`. Era gia' scritta in
+`test_interruzione`, ma il collaudo si fermava prima, sul rosso delle tabelle:
+**un test che non viene raggiunto non protegge niente.**
+
+**5. Le tabelle: il vuoto fra le colonne non e' una tabella.** `_e_tabella`
+dichiarava tabella una riga con due o piu' spazi ampi, cioe' trovava
+l'impaginazione. Su `Basic_Statistics_2007.pdf`: **42 tabelle su 10 pagine**, di
+cui 26 per piu' del 50% lettere. Aggiunta una densita' minima di cifre
+(`SOGLIA_DENSITA_TABELLA = 0.10`) quando i vuoti ampi sono due o piu' — la prosa
+a due colonne ne ha **uno solo**, sempre alla stessa x. Falsi positivi **da 42 a
+13**, e la tabella vera del sintetico continua a essere trovata.
+
+**6. Una scansione va rifiutata, non archiviata vuota.** Prima la pipeline
+estraeva 3 caratteri contro 3.610 e non diceva niente: il modo peggiore di
+fallire, perche' te ne accorgi mesi dopo. Ora `classifica()` misura la mediana
+di caratteri per pagina e sotto `SOGLIA_CARATTERI_PAGINA = 100` il documento
+finisce in `falliti/` con la ragione scritta, senza produrre note. La soglia e'
+misurata: sintetico **770**, DSML **1.606**, scansione **0**.
+
+### Cosa non regge ancora
+
+- **Le figure non vengono estratte**: `90-Allegati/` e' vuota. Sul PDF di prova
+  `pdfimages -list` non trova niente perche' sono vettoriali, quindi andranno
+  rese con `pdftocairo` a livello di pagina.
+- **Le scansioni vengono rifiutate, non lette.** Il rifiuto e' onesto e
+  dichiarato, ma un OCR non c'e': serve la seconda corsia (docling).
+- **Le tabelle con intestazioni di solo testo** possono cadere sotto la soglia
+  di densita' e non essere riconosciute. Bilancio accettabile sui documenti
+  provati, da rimisurare se capita un documento che ne e' pieno.
+- **Le note atomiche sono ancora segnalibri** nel vault, con un estratto
+  troncato a meta' parola. `sbobina.py` sa riscriverle — collaudo verde sul
+  sintetico, 6 sezioni su 6 — ma non e' ancora stato passato sui documenti veri.
+
 ## Limiti attuali
 
-Non legge PDF (fase 4) e non ha memoria fra conversazioni diverse (fase 3, ma
-adesso almeno l'archivio non si perde). Il contesto e' 65536 token; oltre ~52000
-il bot avvisa, e a saturazione serve `/nuova`.
+Legge i PDF con livello di testo (sopra), ma non le scansioni. Non ha memoria
+fra conversazioni diverse (fase 3, ma adesso almeno l'archivio non si perde). Il
+contesto e' 65536 token; oltre ~52000 il bot avvisa, e a saturazione serve
+`/nuova`.
 
 ## Installazione
 
@@ -434,9 +553,20 @@ cp searxng/settings.yml.example searxng/settings.yml
 ```
 
 Riempi i segnaposto. Sul fisso: `TELEGRAM_TOKEN` da @BotFather,
-`TELEGRAM_ALLOWED_IDS`, `MAC_BASE_URL` e `MAC_MODEL` verso il modello del Mac.
-Sul Mac (in `mac/.env`): le stesse, ma `MAC_BASE_URL` locale e `GATEWAY_URL`
-verso il gateway del fisso.
+`TELEGRAM_ALLOWED_IDS` (a chi mandare il rapporto di verifica dopo un riavvio),
+`MAC_BASE_URL` e `MAC_MODEL` verso il modello del Mac. Sul Mac (in `mac/.env`):
+le stesse, ma `MAC_BASE_URL` locale e `GATEWAY_URL` verso il gateway del fisso,
+piu' **`PROPRIETARIO`**, il nome con cui il modello si rivolge a te.
+
+`PROPRIETARIO` sta nel `.env` e non nel codice per due ragioni, e la seconda
+costa: il codice e' pubblico, e il prompt di sistema e' il **prefisso della
+cache** del modello — cambiarne una parola azzera il prefill di ogni
+conversazione viva, che a 8K token sono ~340 secondi. Se lasci il segnaposto il
+bot parte lo stesso, ma ti chiamera' "Nome".
+
+Chi puo' parlare col bot non si configura: il **primo** chat id che scrive
+diventa il proprietario, viene registrato nello stato, e da li' in poi gli altri
+sono ignorati.
 
 ### 3. Modelli
 
@@ -465,6 +595,10 @@ lancialo dopo l'avvio.
 
 ### Cosa non funziona ancora
 
-- La duplicazione delle pagine di `INCARICO-qualsiasi-documento.md` e' un
-  difetto aperto.
-- Le scansioni senza livello di testo non sono supportate.
+- Le scansioni senza livello di testo non sono supportate, e **falliscono in
+  silenzio**: la pipeline estrae il vuoto senza dire che e' vuoto.
+- Il rilevatore di tabelle scambia l'impaginazione a due colonne per una
+  tabella. Vedi "Cosa non regge ancora" nella sezione sui documenti.
+- Le figure non vengono estratte, e le note atomiche sono ancora segnalibri.
+- La ripresa dopo un'interruzione **duplica le pagine** nell'integrale.
+- Nessuna memoria fra conversazioni diverse: la fase 3 non e' iniziata.

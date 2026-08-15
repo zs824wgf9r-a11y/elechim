@@ -1,5 +1,11 @@
 # Incarico: rendere il progetto usabile da terzi
 
+> **CONSEGNATO il 15 agosto 2026.** Il repo e' pubblico su
+> `github.com/zs824wgf9r-a11y/elechim`, i `.example` ci sono tutti e il README
+> ha la sezione Installazione. **Strascico**: la depersonalizzazione ha toccato
+> anche file che girano — vedi "La trappola della depersonalizzazione" in
+> `AGENTS.md`. Restava fuori scopo git, e infatti il commit l'ha fatto Claude.
+
 Scritto il 15 agosto 2026. Leggi prima `AGENTS.md`.
 
 Il proprietario vuole pubblicare Elechim su GitHub come repo pubblico, **perche' chiunque

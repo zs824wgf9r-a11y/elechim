@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -39,6 +40,12 @@ LINEE_DX = 26
 TITOLO_DOC = "DOCUMENTO SINTETICO"
 DEDICA = "A CHI LEGGE"
 DEDICA_PICCOLA = "pagina di dedica, non una sezione"
+
+# Prosa che somiglia a una formula: contiene la stessa espressione della
+# formula esposta, un numero di equazione e resta in corpo normale. Il
+# riconoscimento delle formule non deve recintarla: e' il collaudo dei
+# falsi positivi, la classe di difetto che le tabelle hanno appena pagato.
+FRASE_SOMIGLIA = "Si veda la relazione E(s2 + ni) = 0.95 nella sezione (2.3) del capitolo."
 
 
 def avvolgi(testo: str, maxcar: int) -> list[str]:
@@ -160,7 +167,27 @@ def genera_ps() -> None:
     pagine.extend(righe_prosa(meta, 760) for meta in s2[1:])
 
     p9 = [("Helvetica-Bold", "Helvetica", 16, COLONNA_SX, 800, "3. Terza sezione")]
-    p9.extend(righe_prosa(s3[0], 760))
+    # Formula esposta con apice e pedice scolpiti nel PostScript: sono la
+    # verita' di riferimento del collaudo formule. Attenzione all'origine: in
+    # PS e' in basso a sinistra, quindi l'apice sta a y MAGGIORE della base
+    # (773.5 contro 770) e il pedice a y minore (768). La numerazione (9.1) e'
+    # volutamente staccata: poppler la mette in un frammento proprio, come fa
+    # con le equazioni numerate di DSML.
+    p9.extend(
+        [
+            ("Helvetica", "Helvetica", 10, 60, 770, "E(s"),
+            ("Helvetica", "Helvetica", 6.5, 80, 773.5, "2"),
+            ("Helvetica", "Helvetica", 10, 88, 770, "+"),
+            ("Helvetica", "Helvetica", 10, 100, 770, "n"),
+            ("Helvetica", "Helvetica", 6.5, 106, 768, "i"),
+            ("Helvetica", "Helvetica", 10, 112, 770, ")"),
+            ("Helvetica", "Helvetica", 10, 120, 770, "="),
+            ("Helvetica", "Helvetica", 10, 130, 770, "0.95"),
+            ("Helvetica", "Helvetica", 10, 155, 770, "(9.1)"),
+            ("Helvetica", "Helvetica", 10, COLONNA_SX, 750, FRASE_SOMIGLIA),
+        ]
+    )
+    p9.extend(righe_prosa(s3[0], 726))
     pagine.append(p9)
     pagine.extend(righe_prosa(meta, 760) for meta in s3[1:])
 
@@ -260,7 +287,7 @@ def assert_note(slug: str) -> None:
 
 
 def pulisci_vault() -> None:
-    for slug in (SLUG, SLUG_OUT):
+    for slug in (SLUG, SLUG_OUT, "prova-scansione"):
         d = V20 / slug
         if d.exists():
             shutil.rmtree(d)
@@ -272,6 +299,10 @@ def pulisci_vault() -> None:
         for f in (IN / f"{slug}.pdf", ELABORATI / f"{slug}.pdf", Path(f"{slug}.pdf")):
             if f.exists():
                 f.unlink()
+    falliti = IN.parent / "falliti"
+    if falliti.exists():
+        for f in falliti.glob("prova-scansione*"):
+            f.unlink()
     if PS.exists():
         PS.unlink()
 
@@ -330,10 +361,39 @@ def test_percorso_outline() -> dict:
     return r
 
 
+def test_formule(r: dict) -> None:
+    print("formule: recinti, apici e pedici...")
+    md = (MARKDOWN / f"{SLUG}.md").read_text(encoding="utf-8")
+    blocchi = re.findall(
+        r"<!-- formula pag (\d+) blocco (\d+) -->\s*```\s*(.*?)```", md, re.S
+    )
+    assert blocchi, "nessun recinto formula nel markdown"
+    assert len(blocchi) == 1, f"atteso 1 recinto formula (la prosa che somiglia non deve passare), trovati {len(blocchi)}"
+    pag, num, corpo = blocchi[0]
+    assert (pag, num) == ("9", "1"), f"recinto in pagina/blocco inattesi: {pag}/{num}"
+    # verita' di riferimento scritta nel PS: apice su s, pedice su n
+    assert "s^2" in corpo, f"apice noto non ricostruito nel recinto: {corpo!r}"
+    assert "n_i" in corpo, f"pedice noto non ricostruito nel recinto: {corpo!r}"
+    assert corpo.count("^") == 1 and corpo.count("_") == 1, f"marker oltre quelli attesi: {corpo!r}"
+    # i marcatori esistono solo dentro i recinti: la prosa non guadagna nulla
+    fuori = re.sub(r"<!-- formula pag.*?```.*?```", "", md, flags=re.S)
+    assert "^" not in fuori, "marcatore apice fuori dai recinti"
+    assert "_" not in fuori, "marcatore pedice fuori dai recinti"
+    # la prosa che somiglia a una formula resta prosa, al suo posto
+    assert normalizza(FRASE_SOMIGLIA) in normalizza(fuori), "frase-sombra sparita dalla prosa"
+    # il rapporto lo dichiara
+    assert r["formule_marcate"] == 1, r
+    assert r["apici_ricostruiti"] == 1, r
+    assert r["pedici_ricostruiti"] == 1, r
+    print("OK formule: 1 recinto, apice e pedice noti ricostruiti, prosa simile intatta.")
+
+
 def test_poche_voci() -> None:
     print("indice troppo povero: si torna al ripiego...")
+    # Il PDF sorgente e' stato spostato in elaborati/ dal test precedente.
+    src = ELABORATI / PDF.name if (ELABORATI / PDF.name).exists() else PDF
     pdf_povero = Path("/tmp/prova-poche-voci.pdf")
-    genera_pdf_outline(PDF, pdf_povero, [(0, "Solo una voce", None), (4, "E un'altra", None)])
+    genera_pdf_outline(src, pdf_povero, [(0, "Solo una voce", None), (4, "E un'altra", None)])
     s = struttura(pdf_povero, documenti.pagine_totali(pdf_povero))
     assert s["tipo"] == "font-size", s
     assert s["sezioni"], s
@@ -367,24 +427,142 @@ def test_interruzione() -> None:
     assert md2.count("<!-- pag ") == 11
 
 
+def test_coda_esclusiva() -> None:
+    """Due istanze sulla stessa coda: la seconda esce, e esce bene.
+
+    Scenario del 15 agosto 2026, successo davvero: il path unit sorveglia
+    `documenti/in/*.pdf` e il servizio svuota proprio quella cartella, quindi
+    systemd faceva ripartire il servizio addosso a quello vivo. La seconda
+    istanza faceva `glob()` su una lista che la prima stava svuotando e moriva
+    dentro `metadati()` con il PDF sparito a meta' elaborazione - poi il gestore
+    d'errore provava a spostare un file che non c'era piu' e il servizio usciva
+    1, fermando la coda per il guasto che quel gestore esiste per evitare.
+
+    Qui si usa una cartella temporanea vuota: cosi' il test non compete con il
+    servizio systemd reale che guarda `documenti/in/`.
+    """
+    print("coda esclusiva (due istanze insieme)...")
+    with tempfile.TemporaryDirectory() as d:
+        coda = Path(d) / "in"
+        coda.mkdir()
+        with documenti._coda_esclusiva() as primo:
+            assert primo is True, "la prima istanza non ha preso il lock"
+            r = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve().parent / "documenti.py"), str(coda)],
+                capture_output=True, text=True,
+            )
+            # Uscire perche' un'altra istanza sta gia' lavorando non e' un guasto:
+            # se qui torna 1, systemd segna la coda `failed`.
+            assert r.returncode == 0, f"la seconda istanza e' uscita {r.returncode}: {r.stderr}"
+            assert "gia' in lavorazione" in r.stdout, r.stdout
+        with documenti._coda_esclusiva() as dopo:
+            assert dopo is True, "il lock non si e' rilasciato all'uscita"
+    print("OK esclusione: la seconda istanza esce 0 senza toccare la coda.")
+
+
+def test_scarto_file_sparito() -> None:
+    """Il gestore d'errore non presume che il file sia ancora in coda.
+
+    `processa` sposta il PDF in `elaborati/` appena finito: un'eccezione
+    sollevata dopo quello spostamento trovava un `shutil.move` su un percorso
+    inesistente, e quel secondo errore partiva da dentro il gestore, dove non lo
+    prendeva nessuno.
+    """
+    print("scarto di un file gia' sparito...")
+    falliti = IN.parent / "falliti"
+    prima = sorted(falliti.glob("*")) if falliti.exists() else []
+    documenti._scarta(IN / "mai-esistito.pdf", falliti, "prova")
+    dopo = sorted(falliti.glob("*")) if falliti.exists() else []
+    assert prima == dopo, "lo scarto di un file assente ha sporcato falliti/"
+    print("OK scarto: nessuna eccezione, nessun residuo.")
+
+
+def genera_scansione(src: Path, dst: Path, dpi: int = 150) -> None:
+    """Crea una scansione sintetica: rendering in PNG e ricomposizione in PDF.
+
+    Il PDF risultante non ha livello di testo, quindi la pipeline deve
+    rifiutarlo invece di archiviare il vuoto.
+    """
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory() as cartella:
+        base = Path(cartella) / "pagina"
+        subprocess.run(
+            ["pdftoppm", "-png", "-r", str(dpi), str(src), str(base)],
+            check=True,
+        )
+        files = sorted(Path(cartella).glob("pagina-*.png"))
+        if not files:
+            raise RuntimeError("pdftoppm non ha prodotto immagini")
+        imgs = [Image.open(f).convert("RGB") for f in files]
+        imgs[0].save(dst, save_all=True, append_images=imgs[1:], resolution=dpi)
+
+
+def test_scansione_rifiutata() -> None:
+    print("scansione senza livello di testo...")
+    scan = IN / "prova-scansione.pdf"
+    # Il PDF sorgente e' gia' stato spostato in elaborati/ dall'interruzione.
+    src = ELABORATI / PDF.name if (ELABORATI / PDF.name).exists() else PDF
+    genera_scansione(src, scan)
+    try:
+        processa(scan)
+    except documenti.DocumentoRifiutato as e:
+        print(f"  rifiutato correttamente: {e}")
+    else:
+        raise AssertionError("la scansione non e' stata rifiutata")
+
+    falliti = IN.parent / "falliti"
+    assert (falliti / scan.name).exists(), "PDF non spostato in falliti/"
+    ragione = falliti / f"{scan.name}.ragione.txt"
+    assert ragione.exists(), "manca il file ragione"
+    testo_ragione = ragione.read_text(encoding="utf-8").lower()
+    assert "senza livello di testo" in testo_ragione or "testo insufficiente" in testo_ragione, testo_ragione
+    assert not (MARKDOWN / "prova-scansione.md").exists(), "markdown generato per una scansione rifiutata"
+    assert not documenti._note_del_documento("prova-scansione"), "note generate per una scansione rifiutata"
+
+    # pulizia
+    for f in (falliti / scan.name, ragione):
+        if f.exists():
+            f.unlink()
+    print("OK scansione: rifiutata, spostata in falliti/, nessuna nota nel vault.")
+
+
 def main() -> None:
     pulisci_vault()
-    print("generazione PDF sintetici...")
-    genera_ps()
-    genera_pdf_outline(PDF, PDF_OUT)
-    assert PDF.exists() and PDF_OUT.exists()
 
-    test_percorso_fontsize()
-    test_idempotenza()
-    test_percorso_outline()
-    test_poche_voci()
+    # I test che macinano file in `documenti/in/` lo fanno sotto lock: il path
+    # unit di systemd attiverebbe il servizio reale appena vede un PDF, e senza
+    # lock due processi scriverebbero sullo stesso markdown duplicando pagine.
+    # Il lock si prende *prima* di creare i PDF, cosi' il servizio non puo'
+    # partire in parallelo neppure per sbaglio.
+    with documenti._coda_esclusiva() as mio:
+        assert mio is True, "non ho acquisito il lock sulla coda"
+        print("generazione PDF sintetici...")
+        genera_ps()
+        genera_pdf_outline(PDF, PDF_OUT)
+        assert PDF.exists() and PDF_OUT.exists()
+
+        r_fontsize = test_percorso_fontsize()
+        test_formule(r_fontsize)
+        test_idempotenza()
+        test_percorso_outline()
+        test_poche_voci()
+
+    # Il test di esclusione usa una coda temporanea: non deve competere col
+    # servizio reale, ne' presupporre che `documenti/in/` sia vuota.
+    test_coda_esclusiva()
+    test_scarto_file_sparito()
 
     pulisci_vault()
-    print("collaudo interruzione/ripresa...")
-    genera_ps()
-    test_interruzione()
-    assert len(documenti._note_del_documento(SLUG)) == 3
-    print("OK ripresa: ha completato da dove era, senza ricominciare.")
+    print("collaudo interruzione/ripresa e scansione...")
+    with documenti._coda_esclusiva() as mio:
+        assert mio is True, "non ho acquisito il lock sulla coda"
+        genera_ps()
+        genera_pdf_outline(PDF, PDF_OUT)
+        test_interruzione()
+        assert len(documenti._note_del_documento(SLUG)) == 3
+        print("OK ripresa: ha completato da dove era, senza ricominciare.")
+        test_scansione_rifiutata()
 
     # Il vault si lascia PULITO: le note di collaudo dimenticate in giro sono
     # gli orfani che un giorno sono finiti nel rapporto di un altro documento

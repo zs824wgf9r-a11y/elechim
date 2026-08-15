@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import html
 import json
 import os
@@ -33,7 +35,67 @@ WORD_RE = re.compile(r"<word ([^>]+)>([^<]*)</word>")
 # scartare una sezione vera e' peggio che tenere una dedica.
 SOGLIA_TESTO_SEZIONE = 80
 
+# Densita' minima di cifre per considerare una riga a piu' colonne una tabella:
+# la prosa a due colonne ha un solo vuoto ampio e densita' < 1%, una tabella ha
+# piu' gap ed e' ricca di cifre.
+SOGLIA_DENSITA_TABELLA = 0.10
+
+# Sotto questa mediana di caratteri non-spazio per pagina il documento e'
+# considerato una scansione o un PDF senza livello di testo.
+SOGLIA_CARATTERI_PAGINA = 100
+
+# --- formule: apici, pedici e recinti ------------------------------------
+#
+# Le soglie che seguono sono misurate sulle cinque pagine piu' dense di
+# DSML.pdf (443, 145, 142, 67, 467) e su otto pagine di sola prosa, il
+# 16 agosto 2026: gli istogrammi sono in RAPPORTO-formule.md.
+
+# Un apice/pedice e' circa il 65-80% del corpo della sua base: sotto
+# l'80% e' chiaramente piu' piccolo, sopra e' la stessa corsa tipografica
+# (il maiuscoletto 'D'+'OCUMENTO' sta a ~0.80 e in baseline comune, quindi
+# resta fuori per lo spostamento del centro, non per l'altezza).
+SOGLIA_CORPO_SCRIPT = 0.80
+
+# Spostamento del centro verticale dello script rispetto al centro della
+# base, in frazioni dell'altezza della base. Ispettivamente sopra e sotto
+# la linea di base i due cluster partono a ~0.15; i run ridotti sulla
+# stessa baseline (unita', citazioni) stanno dentro +/-0.12.
+SOGLIA_CENTRO = 0.16
+
+# Distanza orizzontale base->script, in frazioni della maggiore delle due
+# altezze. Il mino negativo ammette la sovrapposizione dei limiti di
+# sommatoria, che stanno sopra/sotto il simbolo e rientrano nel suo ingombro.
+GAP_SCRIPT_MIN = -0.9
+GAP_SCRIPT_MAX = 0.7
+
+# Due parole che differiscono di piu' di cosi' nella base (yMax, in
+# frazioni dell'altezza dello script) non sono della stessa riga visiva:
+# un apice si sposta di 0.3-0.6 altezze, la riga sotto sta a un interlinea
+# (circa 1.1-1.5 altezze del corpo). Con 1.3 la riga successiva passava
+# il filtro e produceva pedici fantasma.
+SOGLIA_BASELINE_SCRIPT = 1.0
+
+# Un riga visiva si spezza in frammenti (le colonne) quando il vuoto
+# orizzontale supera questa frazione dell'altezza mediana della pagina.
+SOGLIA_COLONNA = 2.2
+
+# Le parole normali di una riga condividono la baseline entro questa
+# frazione dell'altezza mediana.
+TOL_RIGA_BASELINE = 0.45
+
+SIMBOLI_MATH = frozenset(
+    "=≠≤≥≈≅<>+±×·⋅÷−–∞∑∏∫√∂∇∈∉∀∃∪∩∅⊂⊃⊆⊇∝∼→←↔⇒⇐⊕⊗∧∨¬"
+)
+# L'apice dritto e il trattino ASCII NON entrano nell'insieme: nella prosa
+# di DSML '-' compare 22 volte in otto pagine (parole composte) e '/'
+# 3 volte (date), mentre '+' e' 24 volte nelle dense e 0 in prosa.
+RE_NUMEQUAZIONE = re.compile(r"^[\[(][A-Za-z]?\d+(?:\.\d+)+[\])]$")
+
 RE_NUMERO = re.compile(r"^\d+(\.\d+)*\.?\s+")
+
+
+class DocumentoRifiutato(RuntimeError):
+    """Il documento non ha livello di testo sufficiente per la corsia veloce."""
 
 
 def _attr(attrs: str, nome: str) -> float:
@@ -76,6 +138,33 @@ def metadati(pdf: Path) -> dict:
         if m and m.group(1).strip():
             meta[chiave] = m.group(1).strip()
     return meta
+
+
+def caratteri_pagina(pdf: Path) -> list[int]:
+    """Caratteri non-spazio per pagina, usando un'unica chiamata pdftotext."""
+    out = _comando(["pdftotext", "-layout", str(pdf), "-"])
+    # `pdftotext` separa le pagine con \f; l'ultimo split puo' essere vuoto.
+    pagine = out.rstrip("\f").split("\f") if out else [""]
+    return [len(re.sub(r"\s", "", p)) for p in pagine]
+
+
+def classifica(pdf: Path, pagine: int) -> dict:
+    """Metriche semplici per scegliere la corsia e decidere se rifiutare."""
+    cpp = caratteri_pagina(pdf)
+    if len(cpp) < pagine:
+        cpp.extend([0] * (pagine - len(cpp)))
+    cpp = cpp[:pagine]
+    totale = sum(cpp)
+    mediana = sorted(cpp)[len(cpp) // 2] if cpp else 0
+    media = totale / pagine if pagine else 0.0
+    return {
+        "pagine": pagine,
+        "caratteri_totali": totale,
+        "caratteri_per_pagina_media": media,
+        "caratteri_per_pagina_mediana": mediana,
+        "livello_testo": mediana >= SOGLIA_CARATTERI_PAGINA,
+        "outline": len(voci_outline(pdf)) >= 3,
+    }
 
 
 def prosa_pagina(pdf: Path, n: int) -> str:
@@ -138,7 +227,9 @@ def _soglia_gap(righe: list[list[tuple]]) -> float:
 def _e_tabella(parole: list[tuple], soglia: float) -> bool:
     gap, dens, _ = _stats_riga(parole)
     ampi = sum(1 for g in gap if g > soglia)
-    if ampi >= 2:
+    # Una colonna di prosa ha un solo vuoto ampio e pochissime cifre;
+    # una tabella ne ha piu' d'uno e le cifre sono dense.
+    if ampi >= 2 and dens >= SOGLIA_DENSITA_TABELLA:
         return True
     if ampi >= 1 and dens >= 0.25 and len(parole) >= 2:
         return True
@@ -163,8 +254,11 @@ def _coda_numerica(riga: list[tuple], blocco: list[list[tuple]]) -> bool:
     return abs(riga[0][0] - sinistra) <= 20.0
 
 
-def blocchi_tabella(pdf: Path, n: int) -> list[tuple[float, float, float, float]]:
-    parole = parole_bbox(pdf, n)
+def blocchi_tabella(
+    pdf: Path, n: int, parole: list[tuple] | None = None
+) -> list[tuple[float, float, float, float]]:
+    if parole is None:
+        parole = parole_bbox(pdf, n)
     if not parole:
         return []
     righe = righe_geometriche(parole)
@@ -213,7 +307,218 @@ def tabella_verbatim(pdf: Path, n: int, X: float, Y: float, W: float, H: float) 
     return out.replace("\f", "").strip()
 
 
-def testo_pagina(pdf: Path, n: int, blocchi: list[tuple]) -> str:
+def _mediana(xs: list[float]) -> float:
+    s = sorted(xs)
+    return s[len(s) // 2] if s else 0.0
+
+
+def _marca_apici_pedici(parole: list[tuple]) -> dict[int, tuple[str, int]]:
+    """Per ogni parola che e' un apice o un pedice: ('apice'|'pedice', indice base).
+
+    Accoppiamento a coppie, non per righe: poppler spezza gli apici in blocchi
+    propri (misurato: l'apice di un PDF sintetico finisce in un <block>
+    separato dalla sua base), quindi nessun raggruppamento per righe di
+    poppler e' affidabile. Qui una parola e' uno script della parola che la
+    precede se: e' chiaramente piu' piccola, le e' adiacente in orizzontale
+    (sovvrapposizione ammessa: limiti di sommatoria), sta sulla sua stessa
+    riga visiva, e il suo centro e' spostato in alto (apice) o in basso
+    (pedice) oltre SOGLIA_CENTRO. Un portatore sano di maiuscoletto ha
+    baseline comune e centro quasi allineato: resta fuori.
+
+    La base di uno script puo' essere a sua volta uno script (x_i^2):
+    in quel caso basta l'altezza quasi uguale, il resto lo decide il centro.
+    Se il rilevamento e' incerto la parola non si tocca: un apice mancato e'
+    il comportamento di oggi, uno inventato e' un peggioramento.
+    """
+    if not parole:
+        return {}
+    marcature: dict[int, tuple[str, int]] = {}
+    ordine = sorted(range(len(parole)), key=lambda i: parole[i][0])
+    for pos, i in enumerate(ordine):
+        b = parole[i]
+        # virgole, punti e parentesi sono sempre piu' basse del loro vicino:
+        # senza questo filtro ogni virgola diverrebbe un pedice.
+        if not any(c.isalnum() for c in b[4]):
+            continue
+        hb = b[3] - b[1]
+        if hb <= 0:
+            continue
+        cb = (b[1] + b[3]) / 2
+        migliore: tuple[tuple[float, float], float, int] | None = None
+        for j in ordine[:pos]:
+            a = parole[j]
+            ha = a[3] - a[1]
+            if ha <= 0:
+                continue
+            if j in marcature:
+                if hb > 1.05 * ha:
+                    continue
+            elif hb > SOGLIA_CORPO_SCRIPT * ha:
+                continue
+            gap = b[0] - a[2]
+            m = max(ha, hb)
+            if not (GAP_SCRIPT_MIN * m <= gap <= GAP_SCRIPT_MAX * m):
+                continue
+            if abs(a[3] - b[3]) > SOGLIA_BASELINE_SCRIPT * hb:
+                continue
+            ca = (a[1] + a[3]) / 2
+            dc = (ca - cb) / ha
+            chiave = (abs(a[3] - b[3]), gap)
+            if migliore is None or chiave < migliore[0]:
+                migliore = (chiave, dc, j)
+        if migliore is None:
+            continue
+        dc = migliore[1]
+        if dc >= SOGLIA_CENTRO:
+            marcature[i] = ("apice", migliore[2])
+        elif dc <= -SOGLIA_CENTRO:
+            marcature[i] = ("pedice", migliore[2])
+    return marcature
+
+
+def _righe_frammenti(
+    parole: list[tuple], marcature: dict[int, tuple[str, int]]
+) -> tuple[list[list[int]], float]:
+    """Righe visive (per baseline delle parole normali, script attaccati alla
+    base) spezzate nei frammenti di colonna. Ritorna (frammenti, altezza mediana)."""
+    hs = [w[3] - w[1] for w in parole if w[3] - w[1] > 0]
+    med = max(_mediana(hs), 1.0)
+    normali = sorted(
+        (i for i in range(len(parole)) if i not in marcature),
+        key=lambda i: parole[i][3],
+    )
+    righe: list[list[int]] = []
+    for i in normali:
+        if righe and abs(parole[i][3] - parole[righe[-1][0]][3]) <= TOL_RIGA_BASELINE * med:
+            righe[-1].append(i)
+        else:
+            righe.append([i])
+    for i, (_, base) in marcature.items():
+        for r in righe:
+            if base in r:
+                r.append(i)
+                break
+    frammenti: list[list[int]] = []
+    for r in righe:
+        r.sort(key=lambda i: parole[i][0])
+        corrente: list[int] = []
+        for i in r:
+            if corrente and parole[i][0] - parole[corrente[-1]][2] > SOGLIA_COLONNA * med:
+                frammenti.append(corrente)
+                corrente = [i]
+            else:
+                corrente.append(i)
+        if corrente:
+            frammenti.append(corrente)
+    frammenti.sort(key=lambda f: (parole[f[0]][3], parole[f[0]][0]))
+    return frammenti, med
+
+
+def _segnali_frammento(
+    idxs: list[int], parole: list[tuple], marcature: dict[int, tuple[str, int]]
+) -> dict:
+    testo = "".join(parole[i][4] for i in idxs)
+    compatti = re.sub(r"\s", "", testo)
+    return {
+        "len": len(compatti),
+        "math": sum(c in SIMBOLI_MATH for c in compatti),
+        "nonalfa": sum(1 for c in compatti if not c.isalpha()) / len(compatti) if compatti else 0.0,
+        # le parole normali, non gli script: 'x' + apice '2' e' un pezzo solo
+        "parole": sum(1 for i in idxs if i not in marcature),
+        "num_fine": bool(idxs) and RE_NUMEQUAZIONE.match(parole[idxs[-1]][4].strip()) is not None,
+    }
+
+
+def _e_formula(s: dict) -> bool:
+    """Il riconoscimento sbaglia per difetto: una formula non marcata e' il
+    comportamento di oggi, un paragrafo di prosa recintato e' il difetto dei
+    falsi positivi che le tabelle hanno appena finito di pagare."""
+    if s["len"] < 3:
+        return False
+    if s["math"] >= 2 and s["parole"] <= 6:
+        return True
+    if s["math"] >= 1 and s["parole"] <= 3 and s["len"] <= 42 and s["nonalfa"] >= 0.4:
+        return True
+    if s["math"] >= 2 and s["parole"] <= 9 and s["nonalfa"] >= 0.50:
+        return True
+    if s["num_fine"] and s["math"] >= 1:
+        return True
+    return False
+
+
+def _testo_frammento(
+    idxs: list[int], parole: list[tuple], marcature: dict[int, tuple[str, int]], med: float
+) -> str:
+    """Il testo del frammento con gli apici e i pedici nella forma base^apice
+    e base_pedice. Script consecutivi dello stesso tipo si fondono in un
+    unico marcatore."""
+    pezzi: list[str] = []
+    tipo_prec: str | None = None
+    for k, i in enumerate(idxs):
+        testo = parole[i][4]
+        if i in marcature:
+            tipo = marcature[i][0]
+            simbolo = "^" if tipo == "apice" else "_"
+            if tipo == tipo_prec:
+                pezzi.append(testo)
+            else:
+                if pezzi and pezzi[-1].endswith(" "):
+                    pezzi[-1] = pezzi[-1].rstrip(" ")
+                pezzi.append(simbolo + testo)
+            tipo_prec = tipo
+        else:
+            if k > 0 and parole[i][0] - parole[idxs[k - 1]][2] > 0.2 * med and pezzi and not pezzi[-1].endswith(" "):
+                pezzi.append(" ")
+            pezzi.append(testo)
+            tipo_prec = None
+    return "".join(pezzi)
+
+
+def recinti_formula(
+    pdf: Path, n: int, tabelle: list[tuple], parole: list[tuple] | None = None
+) -> tuple[list[str], int, int]:
+    """Recinti formula della pagina: testo pronto per il markdown, apici e
+    pedici ricostruiti (solo quelli caduti dentro un recinto: nel testo
+    semplice non si tocca nulla, perche' la segmentazione di pdftotext e di
+    -bbox divergono proprio sulle pagine matematiche - misurato, 10-46% di
+    allineamento)."""
+    if parole is None:
+        parole = parole_bbox(pdf, n)
+    if len(parole) < 2:
+        return [], 0, 0
+    if not any(c in SIMBOLI_MATH for w in parole for c in w[4]):
+        # pagina senza simboli: nessuna regola puo' scattare, e saltare
+        # l'accoppiamento (quadratico nelle parole piccole) mantiene il
+        # collaudo e il libro veloci.
+        return [], 0, 0
+    marcature = _marca_apici_pedici(parole)
+    frammenti, med = _righe_frammenti(parole, marcature)
+
+    def interseca(f: list[int]) -> bool:
+        fx0 = min(parole[i][0] for i in f)
+        fy0 = min(parole[i][1] for i in f)
+        fx1 = max(parole[i][2] for i in f)
+        fy1 = max(parole[i][3] for i in f)
+        return any(fx0 < t[2] and fx1 > t[0] and fy0 < t[3] and fy1 > t[1] for t in tabelle)
+
+    recinti: list[str] = []
+    corrente: list[str] = []
+    apici = pedici = 0
+    for f in frammenti:
+        if _e_formula(_segnali_frammento(f, parole, marcature)) and not interseca(f):
+            corrente.append(_testo_frammento(f, parole, marcature, med))
+        elif corrente:
+            recinti.append("\n".join(corrente))
+            corrente = []
+    if corrente:
+        recinti.append("\n".join(corrente))
+    for r in recinti:
+        apici += r.count("^")
+        pedici += r.count("_")
+    return recinti, apici, pedici
+
+
+def testo_pagina(pdf: Path, n: int, blocchi: list[tuple], parole: list[tuple] | None = None) -> str:
     parti = []
     prosa = prosa_pagina(pdf, n)
     if prosa:
@@ -225,6 +530,12 @@ def testo_pagina(pdf: Path, n: int, blocchi: list[tuple]) -> str:
             parti.append("```")
             parti.append(t)
             parti.append("```")
+    recinti, _, _ = recinti_formula(pdf, n, blocchi, parole)
+    for i, testo in enumerate(recinti, 1):
+        parti.append(f"<!-- formula pag {n} blocco {i} -->")
+        parti.append("```")
+        parti.append(testo)
+        parti.append("```")
     return "\n\n".join(parti)
 
 
@@ -244,7 +555,8 @@ def genera_markdown(pdf: Path, nome: str, pagine: int, fino_a: int | None = None
         for n in range(ultima + 1, pagine + 1):
             if fino_a is not None and n > fino_a:
                 break
-            blocco = f"\n\n<!-- pag {n} -->\n\n{testo_pagina(pdf, n, blocchi_tabella(pdf, n))}"
+            parole = parole_bbox(pdf, n)
+            blocco = f"\n\n<!-- pag {n} -->\n\n{testo_pagina(pdf, n, blocchi_tabella(pdf, n, parole), parole)}"
             os.write(f.fileno(), blocco.encode("utf-8"))
             f.flush()
     letto = {int(x) for x in re.findall(r"<!-- pag (\d+) -->", md.read_text(encoding="utf-8"))}
@@ -650,6 +962,23 @@ def _caratteri(md: str) -> int:
     return len(testo)
 
 
+def _conteggi_formule(md: str) -> tuple[int, int, int]:
+    """Recinti formula, apici e pedici ricostruiti, contati dal markdown.
+
+    Come le tabelle (contate dal file, non dal processo): cosi' il rapporto
+    e' vero anche dopo un'interruzione e una ripresa. I marcatore ^ e _
+    esistono solo dentro i recinti: nel testo estratto di DSML sono zero
+    (misurato sull'intero libro), quindi il conteggio e' esatto salvo un
+    accento circonflesso letterale dentro una formula, caso dichiarato.
+    """
+    formule = len(re.findall(r"<!-- formula pag", md))
+    apici = pedici = 0
+    for corpo in re.findall(r"<!-- formula pag [^>]* -->\s*```\s*(.*?)```", md, re.S):
+        apici += corpo.count("^")
+        pedici += corpo.count("_")
+    return formule, apici, pedici
+
+
 def rapporto(
     nome: str,
     pdf: Path,
@@ -661,10 +990,12 @@ def rapporto(
     fig: int,
     note: tuple[int, int],
     stadio: str,
+    classif: dict | None = None,
+    formule: tuple[int, int, int] = (0, 0, 0),
 ) -> dict:
     tot_links, risolti = _wikilink_risolti(nome)
     sez = struttura_doc.get("sezioni", [])
-    return {
+    d = {
         "slug": nome,
         "sorgente": str(pdf),
         "pagine_totali": pagine,
@@ -673,6 +1004,9 @@ def rapporto(
         "sezioni_trovate": len(sez),
         "sezioni_con_nota": len(sez) if stadio == "fatto" else 0,
         "tabelle_conservate": tabelle,
+        "formule_marcate": formule[0],
+        "apici_ricostruiti": formule[1],
+        "pedici_ricostruiti": formule[2],
         "figure_trovate": fig,
         "note_indice": note[0] - note[1],
         "note_atomiche": note[1],
@@ -682,6 +1016,10 @@ def rapporto(
         "struttura": struttura_doc.get("tipo"),
         "stadio": stadio,
     }
+    if classif:
+        d["corsia"] = "veloce" if classif["livello_testo"] else "scansione"
+        d["caratteri_per_pagina_mediana"] = classif["caratteri_per_pagina_mediana"]
+    return d
 
 
 def formatta_rapporto(r: dict) -> str:
@@ -697,10 +1035,15 @@ def formatta_rapporto(r: dict) -> str:
         f"sezioni scartate: {r.get('sezioni_scartate', 0)}",
         f"sezioni con nota: {r['sezioni_con_nota']}",
         f"tabelle conservate: {r['tabelle_conservate']}",
+        f"formule marcate: {r.get('formule_marcate', 0)}",
+        f"apici ricostruiti: {r.get('apici_ricostruiti', 0)}",
+        f"pedici ricostruiti: {r.get('pedici_ricostruiti', 0)}",
         f"figure trovate: {r['figure_trovate']}",
         f"note: indice {r['note_indice']}, atomiche {r['note_atomiche']}",
         f"wikilink: {r['wikilink_risolti']}/{r['wikilink_totali']} risolti",
         f"struttura: {r['struttura']}",
+        f"corsia: {r.get('corsia', 'n/d')}",
+        f"caratteri per pagina (mediana): {r.get('caratteri_per_pagina_mediana', 'n/d')}",
     ]
     return "\n".join(righe)
 
@@ -746,10 +1089,23 @@ def processa(pdf: Path | str, fino_a_pagina: int | None = None) -> dict:
     pagine = stato.get("pagine_totali") or pagine_totali(pdf)
     stato["pagine_totali"] = pagine
 
+    classif = classifica(pdf, pagine)
+    if classif["caratteri_per_pagina_mediana"] < SOGLIA_CARATTERI_PAGINA:
+        ragione = (
+            f"PDF senza livello di testo o testo insufficiente per la corsia veloce: "
+            f"{classif['caratteri_totali']} caratteri su {pagine} pagine "
+            f"(mediana {classif['caratteri_per_pagina_mediana']}/pagina)"
+        )
+        # Stessa cartella `documenti/falliti/` usata da `_macina` per i file
+        # che arrivano da `documenti/in/`.
+        _scarta(pdf, pdf.parent.parent / "falliti", ragione)
+        raise DocumentoRifiutato(ragione)
+
     pagine_fatte = genera_markdown(pdf, nome, pagine, fino_a_pagina)
     md = (MARKDOWN / f"{nome}.md").read_text(encoding="utf-8")
     caratteri = _caratteri(md)
     tabelle = len(re.findall(r"<!-- tabella pag", md))
+    formule = _conteggi_formule(md)
 
     stato.update({"pagine_fatte": pagine_fatte, "stadio": "estratto"})
     _salva_stato(nome, stato)
@@ -758,7 +1114,7 @@ def processa(pdf: Path | str, fino_a_pagina: int | None = None) -> dict:
         return rapporto(
             nome, pdf, pagine, pagine_fatte, caratteri,
             {"tipo": "parziale", "titolo_documento": None, "sezioni": []},
-            tabelle, figure(pdf), (0, 0), "estratto-parziale",
+            tabelle, figure(pdf), (0, 0), "estratto-parziale", classif, formule,
         )
 
     strutt = struttura(pdf, pagine)
@@ -769,7 +1125,7 @@ def processa(pdf: Path | str, fino_a_pagina: int | None = None) -> dict:
     )
     stato["stadio"] = "fatto"
     stato["fine"] = datetime.now().isoformat()
-    r = rapporto(nome, pdf, pagine, pagine_fatte, caratteri, strutt, tabelle, fig, note, "fatto")
+    r = rapporto(nome, pdf, pagine, pagine_fatte, caratteri, strutt, tabelle, fig, note, "fatto", classif, formule)
     stato["rapporto"] = r
     _salva_stato(nome, stato)
     if in_coda:
@@ -778,43 +1134,119 @@ def processa(pdf: Path | str, fino_a_pagina: int | None = None) -> dict:
     return r
 
 
-def main() -> None:
+@contextlib.contextmanager
+def _coda_esclusiva():
+    """Una sola istanza per volta sulla coda.
+
+    Il path unit sorveglia `documenti/in/*.pdf` e il servizio stesso svuota
+    quella cartella spostando i file che finisce: la condizione cambia proprio
+    mentre il lavoro e' in corso, e systemd fa ripartire il servizio addosso a
+    quello vivo. Successo il 15 agosto 2026: due processi nello stesso secondo,
+    il secondo ha fatto `glob()` su una lista che il primo stava svuotando e si
+    e' ritrovato il PDF sparito a meta' elaborazione, dentro `metadati()`:
+
+        RuntimeError: comando fallito: pdfinfo .../documenti/in/prova-due-colonne.pdf
+        I/O Error: Couldn't open file ... No such file or directory
+
+    `energia.blocco` non serve a questo: scrive il proprio PID sopra quello di
+    chi c'era, perche' il suo mestiere e' tenere sveglio il fisso, non escludere.
+    Qui serve mutua esclusione vera, ed e' `flock` non bloccante: chi arriva
+    secondo esce **senza errore**, perche' non e' un guasto. Il lavoro non va
+    perso: chi sta gia' lavorando rilegge la cartella prima di chiudere, e se
+    dopo restano PDF il path unit riscatta da solo.
+    """
+    STATO.mkdir(parents=True, exist_ok=True)
+    f = open(STATO / ".coda.lock", "w")  # noqa: SIM115 - deve restare aperto quanto il lock
+    try:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+    finally:
+        f.close()  # chiudere rilascia il flock, anche se il processo muore male
+
+
+def main() -> int:
     ap = argparse.ArgumentParser(description="Corsia veloce fase 4: PDF -> markdown + note Obsidian")
     ap.add_argument("destinazione", help="file PDF o cartella della coda")
     ap.add_argument("--fino-a", type=int, default=None, help="fermati dopo questa pagina (per test)")
     args = ap.parse_args()
     dest = Path(args.destinazione)
-    # Il fisso si sospende da solo dopo tre ore di inerzia, e macinare la coda
-    # non e' attivita' che lui veda: senza questo blocco un documento lungo si
-    # ritrova la macchina addormentata a meta'. Il lavoro riprenderebbe al
-    # risveglio - e' ripartibile - ma resterebbe fermo in silenzio finche'
-    # qualcuno non tocca la tastiera. Il marcatore contiene il PID e sparisce
-    # da solo: un processo morto male non lascia il fisso sveglio per sempre.
-    with energia.blocco("documenti"):
-        _macina(dest, args.fino_a)
+    with _coda_esclusiva() as mio:
+        if not mio:
+            print("coda gia' in lavorazione da un'altra istanza, esco")
+            return 0
+        # Il fisso si sospende da solo dopo tre ore di inerzia, e macinare la
+        # coda non e' attivita' che lui veda: senza questo blocco un documento
+        # lungo si ritrova la macchina addormentata a meta'. Il lavoro
+        # riprenderebbe al risveglio - e' ripartibile - ma resterebbe fermo in
+        # silenzio finche' qualcuno non tocca la tastiera. Il marcatore contiene
+        # il PID e sparisce da solo: un processo morto male non lascia il fisso
+        # sveglio per sempre.
+        with energia.blocco("documenti"):
+            _macina(dest, args.fino_a)
+    return 0
+
+
+def _scarta(f: Path, falliti: Path, ragione: str) -> None:
+    """Toglie dalla coda un documento che non si e' potuto macinare.
+
+    Il file puo' non essere piu' li': `processa` lo sposta in `elaborati/`
+    appena finito, quindi un'eccezione sollevata *dopo* quello spostamento
+    trovava un `shutil.move` su un percorso inesistente. Quel secondo
+    FileNotFoundError partiva da dentro il gestore, non lo prendeva nessuno, e
+    il servizio usciva 1: cioe' la coda si fermava esattamente per il guasto che
+    questo gestore esiste per evitare.
+    """
+    if not f.exists():
+        return
+    falliti.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.move(str(f), str(falliti / f.name))
+    except OSError as e:
+        print(f"  impossibile spostare {f.name} in falliti: {e}")
+        return
+    # La ragione scritta accanto al file: senza, fra un mese in `falliti/` c'e'
+    # un PDF e nessun modo di sapere perche' ci sia finito.
+    (falliti / f"{f.name}.ragione.txt").write_text(
+        f"{datetime.now().isoformat()}\n{ragione}\n", encoding="utf-8"
+    )
+    print(f"  spostato in {falliti}")
 
 
 def _macina(dest: Path, fino_a: int | None) -> None:
-    args = argparse.Namespace(fino_a=fino_a)
-    if dest.is_dir():
-        for f in sorted(dest.glob("*.pdf")):
+    if not dest.is_dir():
+        print(formatta_rapporto(processa(dest, fino_a)))
+        return
+
+    falliti = dest.parent / "falliti"
+    # Si rilegge la cartella a ogni giro invece di fidarsi di una `glob()`
+    # sola: un documento da 533 pagine dura minuti, e i PDF arrivati nel
+    # frattempo - da Syncthing o da Telegram - vanno macinati in questo giro,
+    # non al prossimo scatto del path unit. `visti` impedisce il ciclo infinito
+    # su un file che resta in `in/` perche' non si e' potuto spostare.
+    visti: set[Path] = set()
+    while True:
+        restano = [f for f in sorted(dest.glob("*.pdf")) if f not in visti]
+        if not restano:
+            break
+        for f in restano:
+            visti.add(f)
             # Un documento che esplode non deve restare in coda: il path unit
             # lo rivedrebbe, ripartirebbe, esploderebbe di nuovo, e la coda
             # sarebbe ferma per sempre su un file solo. Si mette da parte e si
             # va avanti con gli altri - la regola e' che `in/` si svuota
             # sempre, qualunque cosa succeda.
             try:
-                print(formatta_rapporto(processa(f, args.fino_a)))
+                print(formatta_rapporto(processa(f, fino_a)))
             except Exception as e:  # noqa: BLE001 - un documento in meno, non una coda ferma
-                falliti = dest.parent / "falliti"
-                falliti.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(f), str(falliti / f.name))
-                print(f"FALLITO {f.name}: {type(e).__name__}: {e}")
-                print(f"  spostato in {falliti}")
+                ragione = f"{type(e).__name__}: {e}"
+                print(f"FALLITO {f.name}: {ragione}")
+                _scarta(f, falliti, ragione)
             print()
-    else:
-        print(formatta_rapporto(processa(dest, args.fino_a)))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

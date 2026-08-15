@@ -144,6 +144,33 @@ modello, per decidere cosa rifare.
 **Fermati li' e consegna.** Non lanciare le 214 sezioni: se la qualita' non
 regge si cambia modello, e avresti buttato un'ora di GPU e 214 note.
 
+## Confini — un'altra sessione sta lavorando adesso, 15 agosto sera
+
+Una seconda sessione sta lavorando su `INCARICO-tabelle-e-scansioni.md`, che
+tocca `documenti.py` e `prova_documenti.py`. Quindi:
+
+- **Non modificare `documenti.py` ne' `prova_documenti.py`.** Leggili quanto ti
+  serve: `sbobina.py` consuma il markdown integrale e il marcatore di stato, non
+  li produce. Se ti serve una modifica li' dentro, **scrivila nel rapporto** e
+  fermati su quel punto: la applica Claude dopo il merge.
+- Lo **stadio nuovo** (`sbobinato`) tienilo in un marcatore tuo accanto a quello
+  dei documenti, o in un campo che aggiungi **senza riscrivere** le funzioni di
+  stato di `documenti.py`.
+- **Non modificare `README.md` e `AGENTS.md`.** Scrivi **`RAPPORTO-sbobina.md`**
+  con quello che andrebbe nel README — i numeri dei modelli candidati, il tempo
+  per sezione, la VRAM misurata. Li integra Claude, per non ritrovarci due
+  sessioni che si sovrascrivono la memoria condivisa.
+- **Non toccare git**, `mac/`, `strumenti.py`, `gateway.py`.
+- **Non riavviare ne' fermare i servizi** (`elechim-gateway`, `macmini-tunnel`,
+  `searxng`, `crawl4ai`): il bot e' in uso vero.
+- `ollama` **non e' un servizio systemd** e il binario non e' nel PATH di una
+  shell non interattiva: risponde su `127.0.0.1:11434`. Usa l'API HTTP, o il
+  percorso pieno del binario.
+- La GPU e' tua per il lavoro, ma `qwen3-vl:4b` (4.529 MiB) va sfrattato con il
+  **lock GPU che c'e' gia' in `gateway.py`** — non farne un secondo — e rimesso
+  con `keep_alive` corto quando hai finito. L'altra sessione non usa la GPU:
+  lavora con poppler, deterministico. La scheda non ve la contendete.
+
 ## Criterio di uscita
 
 - `sbobina.py` funziona su una sezione, da riga di comando;
