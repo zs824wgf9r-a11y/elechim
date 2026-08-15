@@ -1,0 +1,24 @@
+# Elechim — configurazione di SearXNG (quadlet podman, porta 8888).
+# Copia questo file in `settings.yml` accanto al quadlet e riempi i segnaposto.
+# Il formato JSON va abilitato a mano (search.formats): senza, le API rispondono 403.
+
+server:
+  # Chiave segreta: generane una con `openssl rand -hex 32`.
+  secret_key: inserisci-qui-una-chiave-segreta-casuale
+  bind_address: 127.0.0.1
+  port: 8888
+
+search:
+  formats:
+    - html
+    - json
+
+image_proxy: true
+
+engines:
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: startpage
+    disabled: true

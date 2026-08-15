@@ -1,0 +1,6 @@
+# Dipendenze di terze parti di Elechim, ricavate dagli import veri.
+# Il resto e' stdlib o moduli locali. Versioni testate e funzionanti.
+faster-whisper==1.2.1
+pypdf==6.16.1
+requests==2.34.2
+trafilatura==2.2.0

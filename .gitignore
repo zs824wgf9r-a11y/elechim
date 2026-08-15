@@ -1,0 +1,44 @@
+# ---------------------------------------------------------------
+# SEGRETI — mai versionare. Ogni riga qui e' un token vero.
+# ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.env
+!*.example.env
+crawl4ai.env
+searxng/settings.yml
+
+# ---------------------------------------------------------------
+# DATI PERSONALI — conversazioni, memoria, stato del padrone di casa
+# ---------------------------------------------------------------
+archivio/
+.megamemory/
+stato/
+stato.db
+*.db
+*.db-wal
+*.db-shm
+
+# ---------------------------------------------------------------
+# DOCUMENTI — materiale di terzi e output personale.
+# La coda e' vuota per costruzione, ma teniamo fuori tutto tranne
+# le fixture sintetiche generate da prova_documenti.py.
+# ---------------------------------------------------------------
+documenti/in/
+documenti/falliti/
+documenti/elaborati/*
+!documenti/elaborati/prova-due-colonne.pdf
+!documenti/elaborati/prova-outline.pdf
+markdown/
+
+# ---------------------------------------------------------------
+# Ambiente e cache
+# ---------------------------------------------------------------
+.venv/
+# Artefatti degli strumenti di sviluppo (indici MCP), locali per macchina
+.codegraph/
+__pycache__/
+*.pyc
+*.prima-di-*
+.stfolder/

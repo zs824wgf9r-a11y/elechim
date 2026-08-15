@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Elechim sul Mac mini. Va in /Library/LaunchDaemons, non in ~/Library/LaunchAgents:
+  il Mac e' headless e non fa autologin (`who` non stampa nessuno), quindi non
+  esiste una sessione GUI e un LaunchAgent non partirebbe mai al boot.
+  Stesso schema di com.elechim.turbofieldfare: daemon di sistema, ma eseguito
+  con l'utente normale grazie a UserName.
+
+  SEGNAPOSTO: sostituisci ogni NOME_UTENTE con il nome utente macOS reale
+  (cinque percorsi /Users/NOME_UTENTE/... e UserName) PRIMA di
+  copiare il file in /Library/LaunchDaemons.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.elechim.assistente</string>
+
+	<key>UserName</key>
+	<string>NOME_UTENTE</string>
+	<key>GroupName</key>
+	<string>staff</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/NOME_UTENTE/assistente/.venv/bin/python</string>
+		<string>/Users/NOME_UTENTE/assistente/bot.py</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/NOME_UTENTE/assistente</string>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<!-- Se muore in avvio non voglio che launchd ci riprovi dieci volte al secondo. -->
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+
+	<key>StandardOutPath</key>
+	<string>/Users/NOME_UTENTE/assistente/elechim.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/NOME_UTENTE/assistente/elechim.log</string>
+</dict>
+</plist>
