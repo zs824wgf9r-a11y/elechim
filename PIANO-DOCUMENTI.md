@@ -48,8 +48,8 @@ ne accorgi mai piu'.
 
 ### 2. Estrazione — due velocita'
 
-- **Corsia veloce**: se il PDF ha il livello di testo (nato digitale, come il
-  PDF del nutrizionista), `pdftotext -layout` lo prende in millisecondi. Niente
+- **Corsia veloce**: se il PDF ha il livello di testo (nato digitale, come un
+  manuale o un rapporto professionale), `pdftotext -layout` lo prende in millisecondi. Niente
   GPU, niente modello, niente possibilita' di allucinare. Poppler 26.01 e' gia'
   installato.
 - **Corsia piena**: per scansioni, schemi e tabelle su piu' colonne, **Marker**
@@ -100,8 +100,8 @@ Honcho e' il modello **della persona**, non un archivio di documenti. Versargli
 dentro 80 pagine da' un motore di ricerca mediocre e un modello dialettico
 annegato.
 
-- In **Honcho** va il fatto sul proprietario: "dal 1 agosto: 2.400 kcal, 180g di
-  proteine, fase di ricomposizione" — con una data, che fra tre mesi verra'
+- In **Honcho** va il fatto sul proprietario: "dal 1 marzo: corso di tedesco,
+  due sere a settimana" — con una data, che fra tre mesi verra'
   **superato e non cancellato** (vedi `dreaming-mode-consolidamento`).
 - Nel **vault + indice vettoriale** va il corpo del documento.
 
@@ -110,7 +110,7 @@ Due archivi, due mestieri, un solo database.
 ## Cosa vede il Mac
 
 > Documento ingerito: 80 pagine, 34 figure, 12 tabelle. [~300 token di sintesi]
-> handle: `doc:piano-nutrizionale-2026-08`
+> handle: `doc:manuale-2026-03`
 
 Poi il proprietario chiede e un tool restituisce i passaggi pertinenti, compressi, come
 fa gia' `leggi`.

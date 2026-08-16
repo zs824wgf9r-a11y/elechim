@@ -5,7 +5,9 @@ Questo file e' la memoria condivisa: contiene il contesto che e' costato
 giornate di misure e che non si deduce leggendo il codice. Leggilo prima di
 proporre modifiche.
 
-Tutto il progetto e la documentazione sono in italiano. Scrivi in italiano.
+Tutto il progetto e la documentazione interna sono in italiano. La vetrina
+pubblica (`README.md`, `CONTRIBUTING.md`) e' in inglese per essere trovata.
+Scrivi in italiano nella documentazione interna.
 
 ## Topologia — chi fa cosa
 
@@ -40,7 +42,7 @@ stasera diceva "fase 4 ❌, il vault e' vuoto" con 233 note gia' dentro.
   `DSML.pdf` **533 pagine in 70s**, 223 voci di outline, `struttura: outline`.
   Nel vault ci sono **233 note** in `30-Note/` e 5 documenti in `20-Documenti/`.
 - **Il repo e' pubblico**: `github.com/zs824wgf9r-a11y/elechim`, un commit,
-  `.gitignore` verificato, i `.example` di ogni chiave, README con Installazione.
+  `.gitignore` verificato, i `.example` di ogni chiave, `README.it.md` con Installazione.
   Vedi la trappola della depersonalizzazione qui sotto.
 - **crawl4ai e' attivo** (quadlet podman su `127.0.0.1:11235`), davanti alla
   corsia statica `requests`+`trafilatura` che resta come ripiego.
@@ -277,10 +279,11 @@ cache del prompt e' l'unica cosa che rende l'assistente usabile (turno in cache
   `./sincronizza.sh`, mai a mano sul Mac.
 - Prima di installare qualcosa di grosso (`torch` sono ~3GB) dillo: la scelta
   dell'ordine di costruzione e' gia' stata presa e ha una ragione (vedi sotto).
-- **Quello che impari lo scrivi in `README.md`**, nella sezione pertinente, con
-  la data e la misura che l'ha dimostrato. Il README e' la memoria condivisa fra
-  tutti gli strumenti che lavorano qui: se una lezione resta solo nel tuo
-  archivio interno, per gli altri non esiste.
+- **Quello che impari lo scrivi in `README.it.md`**, nella sezione pertinente,
+  con la data e la misura che l'ha dimostrato. `README.it.md` e' la memoria
+  condivisa in italiano fra chi lavora qui; `README.md` e' la vetrina in inglese
+  e non riceve i dettagli operativi. Se una lezione resta solo nel tuo archivio
+  interno, per gli altri non esiste.
 
 ## Il lavoro che viene adesso
 
@@ -314,7 +317,10 @@ diventa insopportabile in una settimana.
 
 ## Dove leggere di piu'
 
-- **`README.md`** — documentazione operativa completa, con le misure.
+- **`README.it.md`** — documentazione operativa completa in italiano, con le misure.
+- **`README.md`** — vetrina in inglese: cos'e', perche' e' diverso, topologia,
+  stato, installazione, licenza.
+- **`CONTRIBUTING.md`** — come segnalare e contribuire, in inglese.
 - **`PIANO-DOCUMENTI.md`** — fase 4, punto di ripresa.
 - Percorsi: vault `~/Obsidian` (`00-Inbox`, `10-Ricerche`, `20-Documenti`,
   `30-Note`, `40-Skills`, `90-Allegati`); `documenti/` e `markdown/` per

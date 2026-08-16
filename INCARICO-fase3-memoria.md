@@ -103,8 +103,8 @@ permesso**.
 Divisione del lavoro fra i due archivi, che e' la parte concettuale di questa
 fase:
 
-- in **Honcho** va il fatto sulla persona, **con una data**: "dal 1 agosto:
-  2.400 kcal, 180g proteine". Fra tre mesi verra' **superato, non cancellato**:
+- in **Honcho** va il fatto sulla persona, **con una data**: "dal 1 marzo:
+  corso di tedesco, due sere a settimana". Fra tre mesi verra' **superato, non cancellato**:
   un fatto cancellato porta via il perche' del cambiamento.
 - nel **vault** va il contenuto: note, appunti, documenti.
 

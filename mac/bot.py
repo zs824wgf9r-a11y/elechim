@@ -276,7 +276,7 @@ def prepara_messaggio(chat_id: int, messaggio: dict) -> str | None:
         return testo
 
     # Da qui in giu' e' roba che non sappiamo ancora leggere. Prima taceva e
-    # basta: l'11 agosto un PDF del nutrizionista e' sparito senza una riga di
+    # basta: l'11 agosto un PDF non gestito e' sparito senza una riga di
     # log, e il modello — che non sa cosa arriva in chat — ha risposto "non hai
     # allegato il file". Un allegato ignorato va detto dal bot, che lo sa per
     # certo, non lasciato indovinare al modello.

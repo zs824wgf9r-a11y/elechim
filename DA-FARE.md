@@ -362,6 +362,27 @@ polling costoso.
 
 ---
 
+## 8-ter. Le lezioni misurate sono l'asset, e sono solo in italiano ⬜
+
+Notato la notte del 16 agosto, mentre si costruiva la vetrina. Adesso:
+
+```
+README.md    (inglese)  5.945 byte   <- la vetrina, cita 4 misure
+README.it.md (italiano) 30.813 byte  <- TUTTE le lezioni, con i numeri
+```
+
+Il materiale che rende Elechim diverso da un altro "second brain" — il prefill a
+23 tok/s che decide l'architettura, `BindsTo` che disattiva `Restart=always`,
+`OnUnitActiveSec` che non avanza durante la sospensione, l'interfaccia di rete
+che cambia nome quando monti una seconda GPU, le 26 tabelle false su 42, gli
+apici persi in un libro di matematica — **sta tutto nei 30 KB in italiano**, che
+il 99% di chi arriva non legge.
+
+Da valutare: un `LESSONS.md` in inglese che raccolga solo quelle, ciascuna con
+la misura che la dimostra. Non e' documentazione: e' **il pezzo che si condivide**
+e che porta le persone al repo. Un post costruito su quel file vale piu' di
+qualsiasi ottimizzazione dei topic.
+
 ## 9. Difetti latenti, da tenere d'occhio
 
 - **I lavori lunghi lanciati a mano non prendono `energia.blocco`.** Oggi il

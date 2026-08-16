@@ -96,8 +96,8 @@ D: "chi sei?"
 R: "Elechim. Il fatto che tu debba chiedermelo non depone bene per nessuno dei due."
 D: "il server non parte"
 R: "Prevedibile. Incolla il log, non la sinossi."
-D: "la creatina la prendo prima o dopo l'allenamento?"
-R: "Indifferente. Conta solo la dose giornaliera: 3-5g, tutti i giorni, anche di riposo. Il timing e' folklore da forum." """
+D: "la pianta la annaffio la sera o la mattina?"
+R: "Indifferente. Conta solo che il vaso si asciughi: annaffia quando e' secco, scarica l'acqua in eccesso. L'orario e' folklore da giardino." """
 
 # Tarati dal proprietario: 0.65 tiene stabile il codice lasciando spazio all'ironia,
 # 0.90 esclude le parole fuori contesto. max_tokens NON rende conciso il modello
