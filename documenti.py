@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import html
 import json
 import os
@@ -11,11 +12,14 @@ import shutil
 import subprocess
 import tempfile
 import unicodedata
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import energia
+import requests
+import visione
 from pypdf import PdfReader
 
 BASE = Path(__file__).resolve().parent
@@ -27,6 +31,19 @@ STATO = BASE / "stato" / "documenti"
 VAULT = Path.home() / "Obsidian"
 V20 = VAULT / "20-Documenti"
 V30 = VAULT / "30-Note"
+V90 = VAULT / "90-Allegati"
+
+# Soglie per il filtro delle figure raster, misurate su DSML.pdf il 17 agosto
+# 2026. L'ordine conta: l'hash e' l'unico filtro che non promuove decorazioni
+# grandi a figure vere.
+SOGLIA_FIGURA_LATO_MIN = 64  # px: sotto ci sono glifi matematici
+SOGLIA_FIGURA_PROPORZIONE = 8.0  # max(w/h, h/w): oltre sono righelli/filetti
+
+# Soglia per le pagine con figure vettoriali: elementi di disegno SVG contati
+# con pdftocairo -svg. Misurata su DSML.pdf: mediana ~194, p90 ~346; 500 separa
+# le pagine con figure dalle pagine di sola prosa.
+SOGLIA_ELEMENTI_VETTORIALI = 500
+VETTORIALI_DPI = 150
 
 WORD_RE = re.compile(r"<word ([^>]+)>([^<]*)</word>")
 
@@ -124,10 +141,236 @@ def pagine_totali(pdf: Path) -> int:
     return int(m.group(1))
 
 
-def figure(pdf: Path) -> int:
+@dataclass
+class FiguraRaster:
+    pagina: int
+    indice: int
+    larghezza: int
+    altezza: int
+    hash: str
+    percorso: Path
+    didascalia: str = ""
+    descrizione: str = ""
+
+
+@dataclass
+class FiguraVettoriale:
+    pagina: int
+    elementi: int
+    percorso: Path
+    didascalia: str = ""
+    descrizione: str = ""
+
+
+Figura = FiguraRaster | FiguraVettoriale
+
+
+RE_DIDASCALIA = re.compile(
+    r"^(Figure|Fig\.|Figura|Tabella|Table)\s*\d+[\.:\-]?\s*(.*)$",
+    re.I | re.M,
+)
+
+
+def _hash_immagine(percorso: Path) -> str:
+    """Hash del contenuto pixel dell'immagine, robusto per confronto."""
+    try:
+        from PIL import Image
+
+        with Image.open(percorso) as im:
+            im = im.convert("RGB")
+            return hashlib.sha256(im.tobytes()).hexdigest()[:32]
+    except Exception:
+        # Se Pillow non digerisce il file, fallback su hash del file grezzo.
+        return hashlib.sha256(percorso.read_bytes()).hexdigest()[:32]
+
+
+def _proporzione(w: int, h: int) -> float:
+    if not h:
+        return float("inf")
+    return max(w, h) / min(w, h)
+
+
+def figure_raster(
+    pdf: Path, nome: str, allegati: Path
+) -> tuple[list[FiguraRaster], dict]:
+    """Estrae le figure raster vere, filtrando decorazioni, glifi e righelli.
+
+    La cascata e' nell'ordine misurato: prima l'hash (decorazioni ripetute),
+    poi la dimensione (glifi), poi le proporzioni (righelli/filetti).
+    """
     out = _comando(["pdfimages", "-list", str(pdf)])
     righe = [r for r in out.splitlines()[2:] if re.match(r"^\s*\d+", r)]
-    return len(righe)
+
+    # Elenco delle immagini di tipo 'image' con i metadati necessari.
+    immagini: list[tuple[int, int, int, int, int]] = []  # pag, num, w, h, idx
+    for idx, riga in enumerate(righe):
+        campi = riga.split()
+        if len(campi) < 6:
+            continue
+        try:
+            pagina = int(campi[0])
+            num = int(campi[1])
+            tipo = campi[2]
+            w = int(campi[3])
+            h = int(campi[4])
+        except Exception:
+            continue
+        if tipo != "image":
+            continue
+        immagini.append((pagina, num, w, h, idx))
+
+    if not immagini:
+        return [], {"partenza": 0, "decorazione": 0, "glifo": 0, "righello": 0}
+
+    allegati.mkdir(parents=True, exist_ok=True)
+    scarti = {"partenza": len(immagini), "decorazione": 0, "glifo": 0, "righello": 0}
+    figure: list[FiguraRaster] = []
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td) / "img"
+        _comando(["pdfimages", "-png", str(pdf), str(base)])
+
+        # Raggruppa per hash del contenuto.
+        hash_gruppi: dict[str, list[tuple[int, int, int, int, Path]]] = {}
+        for pagina, num, w, h, idx in immagini:
+            src = Path(td) / f"img-{idx:03d}.png"
+            if not src.exists():
+                continue
+            hsh = _hash_immagine(src)
+            hash_gruppi.setdefault(hsh, []).append((pagina, num, w, h, src))
+
+        for hsh, gruppo in hash_gruppi.items():
+            # Decorazione: stessa immagine ripetuta piu' volte.
+            if len(gruppo) > 1:
+                scarti["decorazione"] += len(gruppo)
+                continue
+
+            pagina, num, w, h, src = gruppo[0]
+
+            if min(w, h) < SOGLIA_FIGURA_LATO_MIN:
+                scarti["glifo"] += 1
+                continue
+            if _proporzione(w, h) > SOGLIA_FIGURA_PROPORZIONE:
+                scarti["righello"] += 1
+                continue
+
+            dst = allegati / f"{nome}-raster-p{pagina}-{num}.png"
+            shutil.copy2(src, dst)
+            figure.append(FiguraRaster(pagina, num, w, h, hsh, dst))
+
+    return figure, scarti
+
+
+def _conta_elementi_vettoriali(svg: str) -> int:
+    """Numero di primitive di disegno in un SVG prodotto da pdftocairo."""
+    try:
+        root = ET.fromstring(svg)
+    except Exception:
+        return 0
+    ns = "{http://www.w3.org/2000/svg}"
+    tag = {ns + t for t in ("path", "rect", "circle", "ellipse", "line", "polyline", "polygon")}
+    return sum(1 for e in root.iter() if e.tag in tag)
+
+
+def figure_vettoriali(
+    pdf: Path, nome: str, allegati: Path
+) -> tuple[list[FiguraVettoriale], dict]:
+    """Rileva le pagine con figure vettoriali e le rende a pagina intera.
+
+    pdfimages non vede i grafici vettoriali: qui si rende l'intera pagina con
+    pdftocairo, dichiarando il limite di non ritagliare il riquadro.
+    """
+    pagine = pagine_totali(pdf)
+    allegati.mkdir(parents=True, exist_ok=True)
+    figure: list[FiguraVettoriale] = []
+    stats = {"pagine_controllate": pagine, "pagine_sopra_soglia": 0, "crash": 0}
+
+    with tempfile.TemporaryDirectory() as td:
+        for n in range(1, pagine + 1):
+            svg_out = Path(td) / f"p{n}.svg"
+            r = subprocess.run(
+                ["pdftocairo", "-svg", "-f", str(n), "-l", str(n), str(pdf), str(svg_out)],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                stats["crash"] += 1
+            if not svg_out.exists():
+                continue
+            conteggio = _conta_elementi_vettoriali(
+                svg_out.read_text(encoding="utf-8", errors="replace")
+            )
+            if conteggio > SOGLIA_ELEMENTI_VETTORIALI:
+                stats["pagine_sopra_soglia"] += 1
+                png_out = allegati / f"{nome}-vettoriale-p{n}.png"
+                _comando(
+                    [
+                        "pdftocairo",
+                        "-png",
+                        "-r", str(VETTORIALI_DPI),
+                        "-f", str(n),
+                        "-l", str(n),
+                        str(pdf),
+                        str(png_out.with_suffix("")),
+                    ]
+                )
+                figure.append(FiguraVettoriale(n, conteggio, png_out))
+
+    return figure, stats
+
+
+def didascalie(pdf: Path, pagine: int | None = None) -> dict[int, str]:
+    """Prima didascalia di figura/tabella trovata su ogni pagina."""
+    if pagine is None:
+        pagine = pagine_totali(pdf)
+    out: dict[int, str] = {}
+    for n in range(1, pagine + 1):
+        testo = _comando(["pdftotext", "-f", str(n), "-l", str(n), str(pdf), "-"])
+        m = RE_DIDASCALIA.search(testo)
+        if m:
+            out[n] = m.group(0).strip()
+    return out
+
+
+def descrizione_figura(percorso: Path, didascalia: str = "") -> str:
+    """Descrive un'immagine con qwen3-vl:4b.
+
+    Se il modello non risponde, la figura si conserva comunque e la
+    descrizione resta vuota: una figura senza descrizione e' un ritardo,
+    una figura non salvata e' una perdita.
+    """
+    try:
+        dati = percorso.read_bytes()
+        return visione.descrivi(dati, didascalia)
+    except Exception as e:
+        print(f"  descrizione fallita per {percorso.name}: {e}", flush=True)
+        return ""
+
+
+@contextlib.contextmanager
+def gpu_delle_figure(modello: str = visione.MODELLO):
+    """Riserva la GPU per la descrizione delle figure, come fa la sbobina."""
+    gia_in_gioco = energia.in_gioco()
+    creato = False
+    if not gia_in_gioco:
+        print(energia.libera_vram(), flush=True)
+        creato = True
+    try:
+        yield
+    finally:
+        try:
+            requests.post(
+                f"{visione.OLLAMA}/api/generate",
+                json={"model": modello, "keep_alive": 0},
+                timeout=60,
+            )
+        except Exception:
+            pass
+        if creato:
+            energia.GIOCO.unlink(missing_ok=True)
+            try:
+                print(energia.carica_vram(), flush=True)
+            except Exception:
+                pass
 
 
 def metadati(pdf: Path) -> dict:
@@ -797,6 +1040,22 @@ def nomi_note(etichetta: str, sez: list[dict]) -> list[str]:
     return nomi
 
 
+def _figure_della_sezione(figure: list[Figura], inizio: int, fine: int) -> list[Figura]:
+    """Figure che ricadono nel range di pagine della sezione."""
+    return [f for f in figure if inizio <= f.pagina <= fine]
+
+
+def _riga_figura(f: Figura) -> str:
+    """Markdown per una figura nella nota: link + didascalia + descrizione."""
+    nome = f.percorso.name
+    label = f.didascalia or (f"Figura di pagina {f.pagina}")
+    pezzi = [f"- ![[{nome}]]", f"  {label}"]
+    if f.descrizione:
+        desc = f.descrizione.replace("\n", " ")
+        pezzi.append(f"  _descrizione automatica_: {desc}")
+    return "\n".join(pezzi)
+
+
 def genera_note(
     pdf: Path,
     nome: str,
@@ -804,7 +1063,7 @@ def genera_note(
     struttura_doc: dict,
     meta: dict,
     tabelle: int,
-    fig: int,
+    figure: list[Figura],
     estrazione_completa: bool,
 ) -> tuple[int, int]:
     dir_doc = V20 / nome
@@ -836,7 +1095,7 @@ def genera_note(
         f"pagine: {pagina}",
         f"sezioni: {len(sez)}",
         f"tabelle: {tabelle}",
-        f"figure: {fig}",
+        f"figure: {len(figure)}",
         f"elaborato: {oggi}",
         f"struttura: {struttura_doc.get('tipo')}",
         "tags:",
@@ -853,7 +1112,7 @@ def genera_note(
         f"- pagine: {pagina}",
         f"- sezioni riconosciute: {len(sez)}",
         f"- tabelle conservate verbatim: {tabelle}",
-        f"- figure trovate: {fig}",
+        f"- figure trovate: {len(figure)}",
         f"- [markdown integrale]({integrale})",
         "",
     ]
@@ -916,6 +1175,15 @@ def genera_note(
             estr = estr.replace("[[", "\\[\\[").replace("]]", "\\]\\]")
             p.append(f"> {estr}")
             p.append("")
+
+        figure_sez = _figure_della_sezione(figure, s["pagina"], s["pagina_fine"])
+        if figure_sez:
+            p.append("## Figure")
+            p.append("")
+            for f in figure_sez:
+                p.append(_riga_figura(f))
+                p.append("")
+
         nota.write_text("\n".join(p), encoding="utf-8")
 
     return 1 + len(sez), len(sez)
@@ -992,6 +1260,7 @@ def rapporto(
     stadio: str,
     classif: dict | None = None,
     formule: tuple[int, int, int] = (0, 0, 0),
+    info_figure: dict | None = None,
 ) -> dict:
     tot_links, risolti = _wikilink_risolti(nome)
     sez = struttura_doc.get("sezioni", [])
@@ -1016,6 +1285,16 @@ def rapporto(
         "struttura": struttura_doc.get("tipo"),
         "stadio": stadio,
     }
+    if info_figure:
+        d["figure_raster"] = info_figure.get("raster", 0)
+        d["figure_vettoriali"] = info_figure.get("vettoriali", 0)
+        d["figure_scartate_decorazione"] = info_figure.get("scarti", {}).get("decorazione", 0)
+        d["figure_scartate_glifo"] = info_figure.get("scarti", {}).get("glifo", 0)
+        d["figure_scartate_righello"] = info_figure.get("scarti", {}).get("righello", 0)
+        d["figure_pagine_vettoriali"] = info_figure.get("stats_vett", {}).get("pagine_sopra_soglia", 0)
+        d["figure_con_didascalia"] = info_figure.get("con_didascalia", 0)
+        d["figure_senza_didascalia"] = info_figure.get("senza_didascalia", 0)
+        d["figure_descrizioni"] = info_figure.get("descrizioni", 0)
     if classif:
         d["corsia"] = "veloce" if classif["livello_testo"] else "scansione"
         d["caratteri_per_pagina_mediana"] = classif["caratteri_per_pagina_mediana"]
@@ -1038,7 +1317,11 @@ def formatta_rapporto(r: dict) -> str:
         f"formule marcate: {r.get('formule_marcate', 0)}",
         f"apici ricostruiti: {r.get('apici_ricostruiti', 0)}",
         f"pedici ricostruiti: {r.get('pedici_ricostruiti', 0)}",
-        f"figure trovate: {r['figure_trovate']}",
+        f"figure trovate: {r['figure_trovate']}"
+        + (f" (raster {r.get('figure_raster', 0)}, vettoriali {r.get('figure_vettoriali', 0)})" if 'figure_raster' in r else ""),
+        f"  scartate: decorazione {r.get('figure_scartate_decorazione', 0)}, glifo {r.get('figure_scartate_glifo', 0)}, righello {r.get('figure_scartate_righello', 0)}",
+        f"  pagine vettoriali: {r.get('figure_pagine_vettoriali', 0)}, con/senza didascalia: {r.get('figure_con_didascalia', 0)}/{r.get('figure_senza_didascalia', 0)}",
+        f"  descrizioni generate: {r.get('figure_descrizioni', 0)}",
         f"note: indice {r['note_indice']}, atomiche {r['note_atomiche']}",
         f"wikilink: {r['wikilink_risolti']}/{r['wikilink_totali']} risolti",
         f"struttura: {r['struttura']}",
@@ -1110,22 +1393,69 @@ def processa(pdf: Path | str, fino_a_pagina: int | None = None) -> dict:
     stato.update({"pagine_fatte": pagine_fatte, "stadio": "estratto"})
     _salva_stato(nome, stato)
 
+    figure_list: list[Figura] = []
+    info_figure: dict | None = None
+
     if fino_a_pagina is not None and pagine_fatte < pagine:
         return rapporto(
             nome, pdf, pagine, pagine_fatte, caratteri,
             {"tipo": "parziale", "titolo_documento": None, "sezioni": []},
-            tabelle, figure(pdf), (0, 0), "estratto-parziale", classif, formule,
+            tabelle, 0, (0, 0), "estratto-parziale", classif, formule,
         )
 
+    # Estrazione figure: solo quando il documento e' completo.
+    allegati_dir = V90 / nome
+    allegati_dir.mkdir(parents=True, exist_ok=True)
+    # Pulizia dei file vecchi dello stesso documento per non lasciare orfani
+    # quando il filtro cambia (nomi deterministici, quelli nuovi sovrascrivono).
+    for f in allegati_dir.glob(f"{nome}-*.png"):
+        f.unlink()
+
+    raster, scarti = figure_raster(pdf, nome, allegati_dir)
+    vett, stats_vett = figure_vettoriali(pdf, nome, allegati_dir)
+    figure_list = raster + vett  # type: ignore[assignment]
+
+    didascalie_dict = didascalie(pdf, pagine)
+    con_did = 0
+    senza_did = 0
+    for f in figure_list:
+        f.didascalia = didascalie_dict.get(f.pagina, "")
+        if f.didascalia:
+            con_did += 1
+        else:
+            senza_did += 1
+
+    descrizioni = 0
+    if figure_list:
+        print(f"figure da descrivere: {len(figure_list)} (raster {len(raster)}, vettoriali {len(vett)})", flush=True)
+        with gpu_delle_figure():
+            for f in figure_list:
+                f.descrizione = descrizione_figura(f.percorso, f.didascalia)
+                if f.descrizione:
+                    descrizioni += 1
+
+    info_figure = {
+        "raster": len(raster),
+        "vettoriali": len(vett),
+        "scarti": scarti,
+        "stats_vett": stats_vett,
+        "con_didascalia": con_did,
+        "senza_didascalia": senza_did,
+        "descrizioni": descrizioni,
+    }
+
     strutt = struttura(pdf, pagine)
-    fig = figure(pdf)
+    fig = len(figure_list)
     note = genera_note(
-        pdf, nome, pagine, strutt, metadati(pdf), tabelle, fig,
+        pdf, nome, pagine, strutt, metadati(pdf), tabelle, figure_list,
         estrazione_completa=True,
     )
     stato["stadio"] = "fatto"
     stato["fine"] = datetime.now().isoformat()
-    r = rapporto(nome, pdf, pagine, pagine_fatte, caratteri, strutt, tabelle, fig, note, "fatto", classif, formule)
+    r = rapporto(
+        nome, pdf, pagine, pagine_fatte, caratteri, strutt, tabelle, fig, note,
+        "fatto", classif, formule, info_figure,
+    )
     stato["rapporto"] = r
     _salva_stato(nome, stato)
     if in_coda:

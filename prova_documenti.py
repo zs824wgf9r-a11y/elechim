@@ -17,6 +17,7 @@ from documenti import (
     STATO,
     V20,
     V30,
+    V90,
     formatta_rapporto,
     processa,
     struttura,
