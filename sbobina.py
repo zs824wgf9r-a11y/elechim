@@ -79,12 +79,12 @@ MARGINE_CONTESTO = 0.10
 
 # Caratteri per token, **misurato** il 16 agosto 2026 su cinque sezioni di
 # `dsml` (leggendo `prompt_eval_count` di ollama, non stimando): media 3,72 e
-# **caso peggiore 3,06**. Si usa il peggiore, non la media: il budget deve
+# **caso peggiore 2,7444**. Si usa il peggiore, non la media: il budget deve
 # reggere la sezione piu' densa, non quella tipica. La matematica tokenizza
 # male — formule e simboli costano piu' token della prosa — e questo e' il
 # motivo per cui il numero si misura sul documento vero invece di prenderlo da
 # una tabella generica (le stime "4 caratteri per token" qui sfonderebbero).
-CAR_PER_TOKEN = float(os.environ.get("SBOBINA_CAR_PER_TOKEN", "3.06"))
+CAR_PER_TOKEN = float(os.environ.get("SBOBINA_CAR_PER_TOKEN", "2.7444"))
 
 
 def budget_caratteri(num_ctx: int = NUM_CTX) -> int:
@@ -610,37 +610,41 @@ def scrivi_nota(
 
 @contextlib.contextmanager
 def gpu_della_sbobina(modello: str):
-    """Riserva la GPU con la bandiera che gia' rispetta il gateway.
+    """Riserva la GPU con lock vero, oltre alla bandiera che il gateway rispetta.
 
-    Se siamo noi ad alzare la bandiera (stato/gioco), la dobbiamo abbassare
-    anche se ollama e' impiantato o il processo muore male: altrimenti il
-    fisso resterebbe in modalita' gioco per sempre.
+    Il lock `flock` in `energia.riserva_gpu` impedisce che due lavori in
+    parallelo credano entrambi di essere chi ha liberato la VRAM: chi arriva
+    secondo aspetta, e quando tocca a lui si comporta da primo. Se siamo noi
+    ad alzare la bandiera (stato/gioco), la dobbiamo abbassare anche se ollama
+    e' impiantato o il processo muore male: altrimenti il fisso resterebbe in
+    modalita' gioco per sempre.
     """
-    gia_in_gioco = energia.in_gioco()
-    creato = False
-    if not gia_in_gioco:
-        print(energia.libera_vram(), flush=True)
-        creato = True
-    try:
-        yield
-    finally:
+    with energia.riserva_gpu(f"sbobina/{modello}"):
+        gia_in_gioco = energia.in_gioco()
+        creato = False
+        if not gia_in_gioco:
+            print(energia.libera_vram(), flush=True)
+            creato = True
         try:
-            requests.post(
-                f"{OLLAMA}/api/generate",
-                json={"model": modello, "keep_alive": 0},
-                timeout=60,
-            )
-        except Exception:  # noqa: BLE001
-            pass
-        if creato:
-            # Rimuoviamo la bandiera prima di chiedere a ollama di ricaricare i
-            # modelli: se ollama e' impiantato, carica_vram() fallisce ma la
-            # bandiera deve comunque tornare giu'.
-            energia.GIOCO.unlink(missing_ok=True)
+            yield
+        finally:
             try:
-                print(energia.carica_vram(), flush=True)
+                requests.post(
+                    f"{OLLAMA}/api/generate",
+                    json={"model": modello, "keep_alive": 0},
+                    timeout=60,
+                )
             except Exception:  # noqa: BLE001
                 pass
+            if creato:
+                # Rimuoviamo la bandiera prima di chiedere a ollama di ricaricare i
+                # modelli: se ollama e' impiantato, carica_vram() fallisce ma la
+                # bandiera deve comunque tornare giu'.
+                energia.GIOCO.unlink(missing_ok=True)
+                try:
+                    print(energia.carica_vram(), flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 # --- il lavoro su una sezione ------------------------------------------------

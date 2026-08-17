@@ -349,28 +349,29 @@ def descrizione_figura(percorso: Path, didascalia: str = "") -> str:
 @contextlib.contextmanager
 def gpu_delle_figure(modello: str = visione.MODELLO):
     """Riserva la GPU per la descrizione delle figure, come fa la sbobina."""
-    gia_in_gioco = energia.in_gioco()
-    creato = False
-    if not gia_in_gioco:
-        print(energia.libera_vram(), flush=True)
-        creato = True
-    try:
-        yield
-    finally:
+    with energia.riserva_gpu(f"figure/{modello}"):
+        gia_in_gioco = energia.in_gioco()
+        creato = False
+        if not gia_in_gioco:
+            print(energia.libera_vram(), flush=True)
+            creato = True
         try:
-            requests.post(
-                f"{visione.OLLAMA}/api/generate",
-                json={"model": modello, "keep_alive": 0},
-                timeout=60,
-            )
-        except Exception:
-            pass
-        if creato:
-            energia.GIOCO.unlink(missing_ok=True)
+            yield
+        finally:
             try:
-                print(energia.carica_vram(), flush=True)
+                requests.post(
+                    f"{visione.OLLAMA}/api/generate",
+                    json={"model": modello, "keep_alive": 0},
+                    timeout=60,
+                )
             except Exception:
                 pass
+            if creato:
+                energia.GIOCO.unlink(missing_ok=True)
+                try:
+                    print(energia.carica_vram(), flush=True)
+                except Exception:
+                    pass
 
 
 def metadati(pdf: Path) -> dict:

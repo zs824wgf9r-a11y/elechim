@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import fcntl
 import os
 import subprocess
 import time
@@ -39,8 +40,15 @@ BLOCCHI = STATO / "blocca"
 ATTIVITA = STATO / "ultima-attivita"
 GIOCO = STATO / "gioco"
 DERIVA = STATO / "deriva-sospensione"
+GPU_LOCK = STATO / ".gpu.lock"
 
 OLLAMA = "http://127.0.0.1:11434"
+
+# Timeout per l'attesa della GPU in riserva_gpu. Sei ore coprono anche la
+# sbobina completa di un libro grosso (`sbobina dsml --tutte`), che e' il
+# lavoro piu' lungo che usa questo lock. Un timeout serve per non lasciare
+# un processo appeso per sempre se qualcun altro muore senza rilasciare.
+TIMEOUT_GPU = 6 * 3600
 
 # Tre ore. Volutamente generose: una sospensione sbagliata costa al proprietario un
 # risveglio e trenta secondi di attesa, mentre restare accesi un'ora in piu'
@@ -307,6 +315,46 @@ def vram_usata() -> tuple[int, int]:
 
 def in_gioco() -> bool:
     return GIOCO.exists()
+
+
+@contextlib.contextmanager
+def riserva_gpu(chi: str, timeout: float | None = TIMEOUT_GPU):
+    """Mutex fra processi sulla GPU.
+
+    Chi arriva secondo **aspetta** invece di uscire, perche' qui il lavoro
+    e' legittimo e lungo. Il lock e' un `flock` su file: se il processo
+    muore male (anche `SIGKILL`) il kernel rilascia il lock insieme al
+    descrittore. Il timeout evita di restare appesi per sempre.
+
+    Durante l'attesa si stampa chi tiene la GPU, perche' un'attesa
+    silenziosa di venti minuti e' indistinguibile da un blocco.
+    """
+    _prepara()
+    STATO.mkdir(parents=True, exist_ok=True)
+    f = open(GPU_LOCK, "w")  # noqa: SIM115 - il lock vive con il descrittore aperto
+    try:
+        scadenza = time.time() + timeout if timeout is not None else None
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if scadenza is not None and time.time() >= scadenza:
+                    raise TimeoutError(
+                        f"timeout ({timeout}s) in attesa della GPU"
+                    ) from None
+                try:
+                    occupante = GPU_LOCK.read_text(encoding="utf-8").strip()
+                except Exception:  # noqa: BLE001
+                    occupante = ""
+                occupante = occupante or "altro processo"
+                print(f"GPU occupata da {occupante}, aspetto...", flush=True)
+                time.sleep(0.5)
+        f.write(f"{chi} (pid {os.getpid()})\n")
+        f.flush()
+        yield
+    finally:
+        f.close()  # chiude il descrittore e rilascia il flock
 
 
 def _modelli_caricati() -> list[str]:

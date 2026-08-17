@@ -161,35 +161,57 @@ def assert_protezione_formule() -> None:
 
 
 def assert_budget_segnaposti() -> None:
-    """La contabilita' del budget vale su segnaposti di lunghezze diverse."""
-    tabella = "<!-- tabella pag 1 blocco 1 -->\n```\n| valore |\n| 12345 |\n```"
-    formula = "<!-- formula pag 1 blocco 2 -->\n```\nx_i = y^2 + 1 + z_j - k^3\n```"
-    paragrafi = []
-    for i in range(8):
-        frase = f"Questo e' il paragrafo numero {i} della prova budget. " * 15
-        paragrafi.append(frase.strip())
-    testo = (
-        "\n\n".join(paragrafi[:4])
-        + "\n\n" + tabella + "\n\n"
-        + "\n\n".join(paragrafi[4:6])
-        + "\n\n" + formula + "\n\n"
-        + "\n\n".join(paragrafi[6:])
+    """La contabilita' del budget vale su segnaposti di lunghezze diverse.
+
+    I segnaposti reali hanno la stessa lunghezza per caso ("tabella" e
+    "formula" hanno lo stesso numero di lettere). Il test li sostituisce con
+    due segnaposti diversi, cosi' l'imbottitura per tipo viene esercitata
+    davvero: se qualcuno toglie `.ljust(len(SEGNAPOSTI[tipo]), "_")` in
+    `_chunk_fonte`, i chunk ripristinati sforano il budget e questo test
+    diventa rosso.
+    """
+    # Monkeypatch: segnaposti di lunghezza diversa.
+    segnaposti_originali = sbobina.SEGNAPOSTI.copy()
+    segnaposto_tabella_lungo = (
+        "[qui c'e' una tabella lunga, riportata uguale nella nota sotto Materiale originale]"
     )
-    budget = 3500
-    chunks, _ = sbobina._chunk_fonte(testo, budget)
-    assert len(chunks) > 1, "la prova budget non si e' divisa"
-    for c in chunks:
-        per_modello, _ = sbobina._dividi(c)
-        assert len(per_modello) <= budget, (
-            f"chunk sfora il budget: {len(per_modello)} > {budget}"
+    segnaposto_formula_corta = "[qui c'e' una formula]"
+    assert len(segnaposto_tabella_lungo) != len(segnaposto_formula_corta)
+    sbobina.SEGNAPOSTI = {
+        "tabella": segnaposto_tabella_lungo,
+        "formula": segnaposto_formula_corta,
+    }
+    try:
+        tabella = "<!-- tabella pag 1 blocco 1 -->\n```\n| valore |\n| 12345 |\n```"
+        formula = "<!-- formula pag 1 blocco 2 -->\n```\nx_i = y^2 + 1 + z_j - k^3\n```"
+        paragrafi = []
+        for i in range(8):
+            frase = f"Questo e' il paragrafo numero {i} della prova budget. " * 15
+            paragrafi.append(frase.strip())
+        testo = (
+            "\n\n".join(paragrafi[:4])
+            + "\n\n" + tabella + "\n\n"
+            + "\n\n".join(paragrafi[4:6])
+            + "\n\n" + formula + "\n\n"
+            + "\n\n".join(paragrafi[6:])
         )
-        if "<!-- tabella" in c:
-            assert "```" in c, "tabella spezzata"
-        if "<!-- formula" in c:
-            assert "```" in c, "formula spezzata"
-    unito = re.sub(r"\s+", " ", "\n\n".join(chunks))
-    originale = re.sub(r"\s+", " ", testo)
-    assert unito == originale, "la suddivisione ha perso pezzi"
+        budget = 3500
+        chunks, _ = sbobina._chunk_fonte(testo, budget)
+        assert len(chunks) > 1, "la prova budget non si e' divisa"
+        for c in chunks:
+            per_modello, _ = sbobina._dividi(c)
+            assert len(per_modello) <= budget, (
+                f"chunk sfora il budget: {len(per_modello)} > {budget}"
+            )
+            if "<!-- tabella" in c:
+                assert "```" in c, "tabella spezzata"
+            if "<!-- formula" in c:
+                assert "```" in c, "formula spezzata"
+        unito = re.sub(r"\s+", " ", "\n\n".join(chunks))
+        originale = re.sub(r"\s+", " ", testo)
+        assert unito == originale, "la suddivisione ha perso pezzi"
+    finally:
+        sbobina.SEGNAPOSTI = segnaposti_originali
     print("OK budget segnaposti: ogni chunk sta nel budget, recinti intatti, copertura totale.")
 
 
@@ -315,6 +337,15 @@ def assert_budget_derivato() -> None:
     # quello che parte deve stare nel contesto, con il margine
     token = piccolo / sbobina.CAR_PER_TOKEN + sbobina.TOKEN_PROMPT + sbobina.MAX_TOKEN_SPIEGAZIONE
     assert token < 8192, f"il budget non sta in num_ctx: {token:.0f} token"
+    # protezione del segno: riconvertito al tasso peggiore misurato, il budget
+    # calcolato non deve superare num_ctx. Se CAR_PER_TOKEN cresce, questa
+    # asserzione diventa rossa prima che ollama tagli in silenzio.
+    tasso_peggiore = 2.7444
+    token_peggiore = piccolo / tasso_peggiore + sbobina.TOKEN_PROMPT + sbobina.MAX_TOKEN_SPIEGAZIONE
+    assert token_peggiore <= 8192, (
+        f"il budget al tasso peggiore ({tasso_peggiore}) sfora num_ctx: "
+        f"{token_peggiore:.0f} token"
+    )
     print(f"OK budget: derivato dal contesto ({piccolo:,} caratteri a 8k, {grande:,} a 32k).")
 
 
