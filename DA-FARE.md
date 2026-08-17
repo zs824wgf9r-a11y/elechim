@@ -650,6 +650,156 @@ dice («per la nostra esatta combinazione: non trovato»).
 
 ---
 
+## 7-septies. La ricerca sulla ridondanza ✅ — `RICERCA-ridondanza.md`
+
+Chiesta dal proprietario il 17 agosto sera: *«Secondo me sono problemi gia'
+risolti da altre persone.»* Impostata al contrario delle precedenti: **parti
+dall'ipotesi che il nostro sia ridondante e prova a dimostrarlo**, perche'
+`RICERCA-stato-arte.md` aveva concluso «teniamo il nostro» su 4 punti su 6
+giudicando il lavoro di casa.
+
+**Esito: niente da adottare in blocco, tre cose da provare.**
+
+- **`book-to-skill`** (★22.498, MIT, attivissimo) e' il piu' vicino alla fase 4,
+  e la meta' deterministica somiglia alla nostra. Ma la strutturazione **non e'
+  codice, e' un prompt**: la fa l'agente ospite, **in cloud di default**, e il
+  README lo ammette. Per il nostro veto e' fuori. Non protegge tabelle e formule,
+  non verifica i numeri, non produce note Obsidian.
+  **Ma valida la nostra architettura**: «estrai in locale, poi l'agente vede solo
+  il capitolo giusto» e' la nostra regola del Mac che non vede mai il documento,
+  raggiunta da qualcun altro per conto suo. La differenza e' **dove si traccia la
+  linea dell'LLM**: loro dopo l'estrazione, noi dopo la strutturazione.
+- **`needle`** (Apache-2.0, team vero): **non c'entra**. E' un modello da 45M
+  parametri per il tool calling in 28MB di RAM, non recupero e non memoria.
+- **VaultForge** e' il concorrente diretto sul pezzo 1 (PDF -> note atomiche con
+  wikilink su Obsidian) ma e' **★10, un solo manutentore, semiattivo, e tutta la
+  strutturazione e' LLM in cloud**: non e' una dipendenza. Da rubare **l'idea**
+  del suo imbuto di link-building deterministico (struttura -> TF-IDF ->
+  euristiche -> LLM solo sui candidati) invece di lasciare i wikilink al modello.
+- **`groundguard`** impacchetta la verifica «numeri contro la fonte» con un tier
+  lessicale BM25 senza LLM e un verdetto `NOT_GROUNDED`. Da provare in un venv di
+  scarto su sezioni con numeri alterati di proposito.
+- **Graphiti** (Apache-2.0, progetto serio) implementa gia' il principio del
+  dreaming mode — fatti datati, superati, mai cancellati — e gira **embedded con
+  Kuzu**. E' un'alternativa molto piu' leggera a Postgres+pgvector+Redis per la
+  fase 3, e va confrontata con Honcho **prima** di installare qualsiasi cosa.
+- **Il guardiano non esiste**: nessuno sorveglia lo stream di eventi di un
+  processo CLI esterno con escalation SIGTERM->SIGKILL e budget di retry. Si
+  costruisce, rubando il disegno da CAO e agent-monitor.
+
+**Dove siamo davvero rari, e la ragione e' tecnica**: nessun progetto rispetta i
+tre vincoli **insieme** — tutto locale, i documenti non escono dalle due
+macchine, tabelle e formule mai da un LLM. In particolare la **corsia veloce
+deterministica** (533 pagine in 70 secondi, senza nessun modello) non l'ha fatta
+nessuno: tutti strutturano con un LLM. Non e' «fatto meglio da altri», e' **fatto
+da nessuno con questi vincoli**.
+
+**Il difetto del rapporto, da correggere nei prossimi incarichi di ricerca**:
+**zero URL** in 31 KB, benche' l'incarico li imponesse. I fatti reggono — quattro
+affermazioni verificate a campione su quattro, con numeri identici — ma la
+verifica e' costata una ricostruzione a mano con searxng. Nei prossimi incarichi:
+**l'URL va accanto a ogni affermazione**, e prima di accettare un rapporto si
+controlla che ce ne siano.
+
+---
+
+## 7-sexies. Gli MCP sono unificati ✅ 17 agosto sera
+
+Prima ogni agente aveva la sua configurazione, in un file diverso e in una
+sintassi diversa, mantenuta a mano:
+
+| agente | prima | ora |
+|---|---|---|
+| Claude Code | `megamemory`, `web-forager`, `codegraph` | invariato |
+| opencode | `megamemory` | **+ `codegraph`, + `web-forager`** |
+| agy | **nessuno** | **`megamemory`, `codegraph`** |
+
+Il guadagno non e' il numero di strumenti: e' che `codegraph`
+(`recall_failures`, `recall_patterns`, `add_decision`) prima lo vedeva **un
+agente solo**, quindi gli altri ripetevano errori gia' pagati. Oggi ne sono stati
+ripetuti almeno tre.
+
+**Dove va la configurazione, verificato:**
+
+- opencode: `~/.config/opencode/opencode.json`, chiave `mcp`. **Non** quello del
+  repo, che non viene letto (vedi sezione 9).
+- agy: **`~/.gemini/config/mcp_config.json`**, chiave `mcpServers`, con
+  `command` + `args` per lo stdio. **Non** `settings.json`, che e' solo
+  preferenze. Confermato due volte: dalla documentazione ufficiale
+  (`antigravity.google/docs/cli/mcp` e la pagina di migrazione) e **in locale**,
+  perche' `agy` aveva gia' creato quel file vuoto accanto a un `.migrated`.
+- Prova reale con `agy --print`: `status SUCCESS`, risposta piena, e nell'elenco
+  ci sono i tool di **entrambi** i server.
+
+**Una scelta**: ad `agy` non e' stato dato `web-forager`, perche' ha gia'
+`search_web` e `read_url_content` suoi. Ogni tool in piu' e' contesto speso a
+ogni turno.
+
+**Il passo successivo, se un giorno stanca tenerne tre allineati**: un gateway
+MCP che aggrega e presenta un endpoint solo. `RICERCA-mcp.md` ha verificato la
+condizione che lo rende possibile — **tutti e tre i client accettano server
+remoti/HTTP**, non solo stdio — e indica **1MCP** (Apache-2.0, vivo) perche' sa
+anche **filtrare quali tool esporre a quale client**, che e' il guadagno vero.
+Non serve adesso: con tre server e nessun segreto, tre file allineati a mano
+costano meno di un processo in piu' che diventa un singolo punto di guasto.
+
+---
+
+## 7-quinquies. `agy` provato in locale — due misure che cambiano il guardiano
+
+Provato il 17 agosto sera, due run veri (`--mode plan`, modello
+`gemini-3.7-flash-low`, cartella di scarto). Colmano il buco che
+`RICERCA-agy.md` dichiarava: la documentazione non dice cosa succede allo
+scadere del timeout.
+
+**Prova 1 — run normale.** Il contratto e' confermato: 7 righe NDJSON, chiave
+`event`, tipi `init` (1) · `step_update` (5) · `result` (1). In `init` c'e' la
+lista completa degli strumenti, e comprende **`call_mcp_tool`**,
+`list_resources`, `read_resource`: gli MCP `agy` li sa usare.
+
+**Ma il risultato mente due volte su tre.** Un tool e' stato auto-negato
+(headless non puo' chiedere permessi) e il run non ha prodotto niente. Esito:
+
+```
+exit code:      0                      <- mente
+result.status:  "SUCCESS"              <- mente
+result.response: ""                    <- dice la verita'
+stderr:         "no output produced — a tool required the "command" permission
+                 that headless mode cannot prompt for, so it was auto-denied"
+```
+
+**Conseguenza per il guardiano**: la salute di un run non si legge da un
+segnale solo. Servono **tre** condizioni insieme — `status == SUCCESS`, `response`
+non vuota, e i file attesi esistono davvero. E' la stessa regola gia' nota per
+opencode («guarda i file, non il codice di uscita»), qui confermata su un
+secondo strumento: e' una proprieta' degli agenti da riga di comando, non un
+difetto di uno solo.
+
+**Prova 2 — `--print-timeout 5s` su una generazione lunga.** Qui `agy` si
+comporta **bene**, ed e' la differenza vera con opencode:
+
+```
+exit code:       1                            (onesto, distinguibile da 0)
+result.status:   "ERROR"
+result.error:    "timeout waiting for response"
+durata reale:    8s contro 5s dichiarati
+processi rimasti: nessuno                     (muore da solo)
+```
+
+opencode nella stessa situazione resta su `epoll` per ore e vuole `SIGKILL`.
+
+**Il limite della prova, da non dimenticare**: ho provato il caso «il modello e'
+lento», non il caso patologico dell'endpoint morto — che e' quello che ci e'
+costato 5h57m. La issue #594 dice che **proprio li'** `--print-timeout` viene
+ignorato. Quindi il timeout esterno con `-k` resta obbligatorio anche per `agy`.
+
+**Da fare prima di usarlo per un incarico vero**: in modalita' headless i tool
+vengono **auto-negati**, quindi servono regole `permissions.allow` in
+`settings.json` (`command(<target>)` e simili). E' lo stesso file dove andranno
+gli MCP: si configura una volta sola, quando `RICERCA-mcp.md` avra' detto dove.
+
+---
+
 ## 8. Cosa aspetta il proprietario 👤
 
 1. **Guardare una nota sbobinata.** Nel vault ci sono 223 note da `DSML.pdf`, e
@@ -718,6 +868,28 @@ qualsiasi ottimizzazione dei topic.
   lavoro lungo mentre non c'e' nessuno si troverebbe la macchina addormentata
   sotto. Ripartirebbe al risveglio — e' ripartibile — ma resterebbe fermo in
   silenzio.
+- **`opencode.json` del progetto non viene letto**, ed e' la causa comune di
+  quasi tutti i guasti di permesso di oggi. Scoperto il 17 agosto sera: una
+  sessione ha scaricato una pagina in `/tmp` e non e' riuscita a rileggerla —
+
+  ```
+  permission requested: external_directory (/tmp/*); auto-rejecting
+  ```
+
+  — benche' `/tmp/*` sia gia' su `allow` **nell'`opencode.json` del repo**. Il
+  file non viene applicato perche' opencode non tratta `~/assistente` come radice
+  di progetto: e' lo stesso motivo per cui una sessione cercava l'incarico nella
+  home e per cui un percorso assoluto veniva respinto. `megamemory` funzionava
+  perche' sta nella configurazione **globale**.
+
+  **Correzione**: le regole `permission` sono state spostate in
+  `~/.config/opencode/opencode.json`, dove vengono applicate davvero, con
+  l'aggiunta di `{env:HOME}/assistente/*`. Da li' valgono per ogni sessione,
+  qualunque cosa opencode decida sia la radice del progetto.
+
+  Corollario: **qualunque cosa metti nell'`opencode.json` del repo, verifica che
+  abbia effetto** prima di darla per buona. Una configurazione ignorata e' peggio
+  di una assente, perche' sembra che ci sia.
 - **Nei prompt a opencode si usano percorsi RELATIVI.** Un percorso assoluto
   dentro il repo viene classificato come *external directory* e, con
   `"external_directory": {"*": "ask"}` in `opencode.json`, in modalita' non
