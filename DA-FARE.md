@@ -650,6 +650,76 @@ dice («per la nostra esatta combinazione: non trovato»).
 
 ---
 
+## 7-octies. Il lock GPU e' vero ✅, e `CAR_PER_TOKEN` e' corretto ✅
+
+Consegnato il 17 agosto sera. `energia.riserva_gpu(chi, timeout)`: `flock`
+non bloccante in un ciclo d'attesa — cosi' puo' avere un timeout — con default
+**6 ore**, che e' la scelta giusta perche' una sbobina ne dura 4. Usato da
+`gpu_della_sbobina` e da `gpu_delle_figure`. Il kernel rilascia il lock anche su
+`SIGKILL`: e' la proprieta' per cui si usa `flock` invece di un file col PID.
+
+**Provata la mutua esclusione**, misurando **l'ordine** e non solo che finissero
+entrambi (era la trappola da evitare, quarta occorrenza della sezione 1-quater):
+due processi, il primo tiene il lock 3s, **il secondo aspetta 3,0s**.
+
+`CAR_PER_TOKEN = 2.7444`, budget **15.417** caratteri (-10,3%): il margine di
+contesto e' tornato, e il blocco tecnico alle 4 ore e' rimosso.
+
+Il collaudo dell'imbottitura ora sostituisce `SEGNAPOSTI` con lunghezze diverse,
+quindi **puo' fallire**. `prova_sbobina.py` e `prova_documenti.py` entrambi
+verdi, rieseguiti a mano.
+
+**⬜ Due cose restano aperte su questo pezzo:**
+
+1. **`RAPPORTO-lock-gpu.md` non e' stato scritto** — la sessione e' uscita a 4,9
+   minuti col codice buono e senza conclusioni. Ancora una volta.
+2. **Difetto trovato con una prova, non nel rapporto**: il messaggio d'attesa non
+   dice mai **chi** tiene la GPU, stampa sempre «altro processo». Causa:
+   `open(GPU_LOCK, "w")` **tronca il file**, quindi chi aspetta cancella
+   l'identita' di chi lo tiene prima di poterla leggere. Correzione: aprire in
+   append e troncare **dopo** aver preso il lock. E' proprio la parte chiesta
+   perche' «un'attesa silenziosa di venti minuti e' indistinguibile da un blocco».
+
+---
+
+## 7-novies. Come si fanno le ricerche ✅ — `RICERCA-strumenti.md`
+
+Chiesta dal proprietario: *«Le risorse sul web sono tante e spesso inesplorate»*,
+con la segnalazione di `D4Vinci/Scrapling`.
+
+**Scrapling: no.** Non toglie **nessuno** dei guasti che abbiamo misurato — e'
+un framework anti-bot per pagine che non ci hanno mai bloccato. crawl4ai oggi ha
+reso 38/40 e 37/40 pagine a 1,3s e 0,6s medi. Buon progetto (74.780 stelle),
+soluzione a un problema che non abbiamo. Da rivalutare **solo** se un giorno una
+pagina vera ci blocca con un anti-bot.
+
+**Quello che toglie il guasto davvero:**
+
+- **Un token GitHub a sola lettura**: da **60 a 5.000** richieste/ora. E' la
+  risposta al guasto misurato (6 repo dichiarati inesistenti a torto per rate
+  limit). Fine-grained **senza permessi espliciti**: i repo pubblici si leggono
+  comunque. Va in `.env`, con `GITHUB_TOKEN=` aggiunto a `.env.example`. 👤
+- **Due regole di disciplina**, che sono buchi veri del nostro metodo:
+  - **registrare le query** in una sezione «come ho cercato»: oggi nessuna
+    ricerca e' riproducibile, e non si distingue «non trovato» da «non cercato»;
+  - **mai «non trovato» per rate limit**: su 403/429 si legge
+    `x-ratelimit-remaining` e si **cambia fonte**. E' esattamente l'errore fatto
+    stasera guardando i repo di `RICERCA-ridondanza.md`.
+
+**Per il «quadro sempre chiaro» non serve un servizio**: GitHub pubblica feed
+Atom (`releases.atom`, `tags.atom`, `commits.atom`) gratuiti e **senza token**, e
+noi abbiamo gia' timer systemd e bot Telegram — lo stesso pattern della coda.
+Scartati `newreleases.io` e `changedetection.io`: vogliono un account esterno o
+un container in piu' per la stessa cosa. **Massimo otto repo sorvegliati**: una
+lista lunga e' il modo in cui la sorveglianza muore.
+
+**Nota di metodo**: questo rapporto ha **33 URL**, quello sulla ridondanza ne
+aveva **zero**. La differenza non e' il modello, e' che qui l'URL accanto a ogni
+affermazione era un **criterio di uscita dichiarato**. Va messo in tutti gli
+incarichi di ricerca, insieme alla sezione «come ho cercato».
+
+---
+
 ## 7-septies. La ricerca sulla ridondanza ✅ — `RICERCA-ridondanza.md`
 
 Chiesta dal proprietario il 17 agosto sera: *«Secondo me sono problemi gia'
