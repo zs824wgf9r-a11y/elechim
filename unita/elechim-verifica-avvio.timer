@@ -1,0 +1,12 @@
+[Unit]
+Description=Elechim - manda il rapporto di verifica tre minuti dopo l'avvio
+
+[Timer]
+# Tre minuti: il tunnel col Mac si ristabilisce in ~10s, ma il rapporto deve
+# misurare una macchina a regime, non una che sta ancora finendo di alzarsi.
+# Nessun OnUnitActiveSec: scatta una volta per avvio e basta.
+OnStartupSec=3min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

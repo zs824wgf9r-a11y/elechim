@@ -1,0 +1,11 @@
+[Unit]
+Description=Elechim - controlla se il fisso puo' andare a dormire
+# Nessuna dipendenza: deve poter girare anche col gateway caduto. Un gateway
+# morto e' anzi il caso in cui la macchina rischia di restare accesa a vuoto.
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/assistente
+ExecStart=%h/assistente/.venv/bin/python %h/assistente/sospendi.py
+StandardOutput=journal
+StandardError=journal

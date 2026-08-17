@@ -1,0 +1,14 @@
+[Unit]
+Description=Elechim - sorveglia la coda dei PDF da macinare
+
+[Path]
+# Solo *.pdf, ed e' la ragione per cui il PDF troncato non puo' succedere:
+# Syncthing scrive con un nome temporaneo `.syncthing.<nome>.tmp` e rinomina
+# solo a trasferimento completo, quindi questo glob non scatta mai su un file
+# a meta'. Sorvegliare la cartella invece dell'estensione sarebbe bastato a
+# far macinare documenti tagliati, senza un errore da nessuna parte.
+PathExistsGlob=%h/assistente/documenti/in/*.pdf
+Unit=elechim-documenti.service
+
+[Install]
+WantedBy=default.target

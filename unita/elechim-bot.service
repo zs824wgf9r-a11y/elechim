@@ -1,0 +1,21 @@
+[Unit]
+Description=Elechim - bot Telegram dell'assistente personale
+After=network-online.target macmini-tunnel.service
+# Wants e non BindsTo, di proposito. Con BindsTo la caduta del tunnel FERMA il
+# bot, e siccome e' uno stop ordinato da systemd il Restart=always non si
+# applica: il tunnel torna su da solo, il bot resta giu' per sempre. Verificato
+# il 2026-08-10 uccidendo l'ssh. Meglio un bot vivo che risponde "modello non
+# raggiungibile" di un bot morto in silenzio.
+Wants=network-online.target macmini-tunnel.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/assistente
+ExecStart=%h/assistente/.venv/bin/python %h/assistente/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

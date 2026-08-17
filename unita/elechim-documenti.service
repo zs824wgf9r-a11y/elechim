@@ -1,0 +1,27 @@
+[Unit]
+Description=Elechim - macina i PDF in coda e scrive le note su Obsidian
+# Non BindsTo: se un giorno questo dipendesse da un servizio che si riavvia,
+# uno stop ordinato da systemd disattiverebbe Restart. Vedi il README.
+After=network.target
+# Nessun limite di frequenza sugli avvii, ed e' una scelta, non una resa.
+# Il path unit riscatta finche' `in/*.pdf` e' vero, e mentre un'istanza macina
+# un libro da 533 pagine quella condizione resta vera per minuti: tutte le
+# istanze che arrivano dopo trovano il `flock` preso ed escono con codice 0.
+# Sono successi, non guasti - ma col default (5 avvii in 10s) al sesto systemd
+# dichiara `start-limit-hit`, il fallimento si propaga al path unit e la coda
+# smette di sorvegliare. Successo il 15 agosto 2026 alle 17:20: dieci avvii
+# riusciti di fila, coda morta per 1 giorno e 19 ore, in silenzio.
+# La guardia in documenti.py (stadio "fatto" -> sposta il file) copre un altro
+# innesco: chi esce per il lock non puo' spostare niente, il file e' del primo.
+# Alzare il burst non basta: gli avvii sono illimitati per costruzione.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/assistente
+# Prende la cartella intera, non un file: se ne sono arrivati tre mentre
+# lavorava, li trova tutti in questo giro.
+ExecStart=%h/assistente/.venv/bin/python %h/assistente/documenti.py %h/assistente/documenti/in
+# Il lavoro e' ripartibile per costruzione (marcatore per documento in
+# stato/documenti/), quindi un'interruzione non e' un guaio: riprende.
+TimeoutStartSec=3600

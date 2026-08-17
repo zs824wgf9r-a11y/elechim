@@ -1,0 +1,19 @@
+[Unit]
+Description=Elechim - gateway degli strumenti (ricerca, vocali, immagini) sul fisso
+After=network-online.target ollama.service searxng.service
+# Wants e non Requires, per la stessa ragione del tunnel: se ollama o SearXNG
+# cadono, il gateway deve restare in piedi e rispondere "questo strumento non
+# c'e'". Un gateway morto toglie a Elechim anche gli strumenti che funzionano.
+Wants=network-online.target ollama.service searxng.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/assistente
+ExecStart=%h/assistente/.venv/bin/python %h/assistente/gateway.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

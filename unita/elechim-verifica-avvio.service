@@ -1,0 +1,11 @@
+[Unit]
+Description=Elechim - rapporto di verifica dopo il riavvio, su Telegram
+After=elechim-gateway.service macmini-tunnel.service
+Wants=elechim-gateway.service macmini-tunnel.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/assistente
+ExecStart=%h/assistente/.venv/bin/python %h/assistente/verifica_avvio.py
+StandardOutput=journal
+StandardError=journal

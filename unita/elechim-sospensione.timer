@@ -1,0 +1,17 @@
+[Unit]
+Description=Elechim - ogni dieci minuti guarda se e' ora di dormire
+
+[Timer]
+# Un quarto d'ora dopo l'avvio: se il fisso e' stato appena svegliato col magic
+# packet, il primo controllo non deve arrivargli addosso mentre il Mac sta
+# ancora ristabilendo il tunnel.
+OnBootSec=15min
+OnUnitActiveSec=10min
+# Dieci minuti di granularita' su una soglia di tre ore: la sospensione arriva
+# al massimo dieci minuti tardi, e in cambio il controllo non fa rumore nel
+# journal.
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
