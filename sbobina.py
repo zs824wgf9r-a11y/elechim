@@ -113,6 +113,10 @@ def budget_caratteri(num_ctx: int = NUM_CTX) -> int:
 # Sotto questa non c'e' niente da spiegare: titoli, intestazioni di capitolo.
 MIN_FONTE = 200
 
+# Quando la frazione di caratteri sostituiti da segnaposto supera questa
+# soglia, la nota lo dichiara invece di fingere una spiegazione completa.
+SOGLIA_SEGNAPOSTI = 0.50
+
 # Il tetto di generazione. Il professore *espande*, quindi l'output puo'
 # superare la fonte: 1.800 token sono ~60-70 righe di spiegazione. Il tetto
 # alto non costa niente quando il modello e' breve, perche' si ferma da solo.
@@ -147,10 +151,15 @@ PROMPT_PUNTI = (
 
 PROMPT_MINIMO = "Spiega questo testo in italiano, con parole semplici.\n\n"
 
-# Cosa scrivere al posto di un recinto di tabella nel testo dato al modello.
+# Cosa scrivere al posto dei recinti nel testo dato al modello.
 SEGNAPOSTO_TABELLA = "[qui c'e' una tabella, riportata uguale nella nota sotto Materiale originale]"
+SEGNAPOSTO_FORMULA = "[qui c'e' una formula, riportata uguale nella nota sotto Materiale originale]"
 
-RE_BLOCCO = re.compile(r"<!-- tabella pag \d+ blocco \d+ -->\s*```.*?```", re.S)
+SEGNAPOSTI = {"tabella": SEGNAPOSTO_TABELLA, "formula": SEGNAPOSTO_FORMULA}
+
+# Recinti di tabella e formula prodotti da documenti.py.
+RE_BLOCCO = re.compile(r"<!-- (tabella|formula) pag \d+ blocco \d+ -->\s*```.*?```", re.S)
+RE_MARCA_BLOCCO = re.compile(r"__BLOCCO_(\d+)__+")
 RE_NUMERI = re.compile(r"\d+(?:[.,]\d+)?")
 
 
@@ -228,36 +237,50 @@ def _fonte(nome: str, da_pag: int, a_pag: int) -> str:
 
 
 def _dividi(fonte: str) -> tuple[str, str]:
-    """Separa la prosa (che va al modello) dalle tabelle (che non ci va')."""
-    materiale = "\n\n".join(m.group(0) for m in RE_BLOCCO.finditer(fonte))
-    per_modello = RE_BLOCCO.sub(SEGNAPOSTO_TABELLA, fonte)
+    """Separa la prosa (che va al modello) dai recinti (che non ci vanno')."""
+    blocchi: list[tuple[str, str]] = []
+
+    def sostituisci(m: re.Match) -> str:
+        tipo = m.group(1)
+        blocchi.append((tipo, m.group(0)))
+        return SEGNAPOSTI[tipo]
+
+    per_modello = RE_BLOCCO.sub(sostituisci, fonte)
+    righe = []
+    for tipo, recinto in blocchi:
+        etichetta = "Tabella" if tipo == "tabella" else "Formula"
+        righe.append(f"**{etichetta}**\n\n{recinto}")
+    materiale = "\n\n".join(righe)
     return per_modello, materiale
 
 
 def _chunk_fonte(fonte: str, max_car: int) -> tuple[list[str], dict[str, int]]:
     """Divide una sezione lunga in parti coerenti, senza spezzare i recinti
-    di tabella. I recinti sono blocchi indivisibili: se una tabella da sola
-    supera il tetto, finisce in un chunk piu' lungo che comunque non passa
-    al modello (la tabella e' sostituita dal segnaposto).
+    di tabella e formula. I recinti sono blocchi indivisibili: se un recinto
+    da solo supera il tetto, finisce in un chunk piu' lungo che comunque non
+    passa al modello (il recinto e' sostituito dal segnaposto giusto).
 
     Torna anche le statistiche di taglio: quante volte si e' scesi a titoli,
     pagine, paragrafi, frasi, parole.
     """
-    tabelle: list[str] = []
+    blocchi: list[tuple[str, str]] = []
     stats = {"titoli": 0, "pagine": 0, "paragrafi": 0, "frasi": 0, "parole": 0}
 
     def salva(m: re.Match) -> str:
-        tabelle.append(m.group(0))
+        tipo = m.group(1)
+        blocchi.append((tipo, m.group(0)))
         # Il segnaposto interno si imbottisce fino alla lunghezza di quello che
-        # il modello vedra' davvero (`SEGNAPOSTO_TABELLA`, ~80 caratteri contro
-        # i ~13 di `__TABELLA_0__`). Senza, la divisione misura una lunghezza e
-        # il modello ne riceve un'altra: misurato su `dsml`, un pezzo dato per
-        # 17.190 caratteri ne consegnava 22.076, cioe' ~7.200 token, che con
-        # prompt e risposta sfondavano `num_ctx` e facevano tagliare la fonte a
-        # ollama in silenzio. Il budget deve valere sul testo che parte, non su
-        # una sua abbreviazione.
-        marca = f"__TABELLA_{len(tabelle) - 1}__"
-        return "\n\n" + marca.ljust(len(SEGNAPOSTO_TABELLA), "_") + "\n\n"
+        # questo blocco ricevera' davvero (`SEGNAPOSTO_TABELLA` o
+        # `SEGNAPOSTO_FORMULA`, ~80 caratteri contro i ~13 di `__BLOCCO_0__`).
+        # Senza imbottitura la divisione misura una lunghezza e il modello ne
+        # riceve un'altra: misurato su `dsml`, un pezzo dato per 17.190 caratteri
+        # ne consegnava 22.076, cioe' ~7.200 token, che con prompt e risposta
+        # sfondavano `num_ctx` e facevano tagliare la fonte a ollama in
+        # silenzio. Il budget deve valere sul testo che parte, non su una sua
+        # abbreviazione. Ogni tipo di blocco si imbottisce con la propria
+        # lunghezza, perche' tabelle e formule hanno segnaposti diversi.
+        marca = f"__BLOCCO_{len(blocchi) - 1}__"
+        return "\n\n" + marca.ljust(len(SEGNAPOSTI[tipo]), "_") + "\n\n"
 
     testo_segnaposto = RE_BLOCCO.sub(salva, fonte)
 
@@ -361,11 +384,11 @@ def _chunk_fonte(fonte: str, max_car: int) -> tuple[list[str], dict[str, int]]:
 
     def ripristina(testo: str) -> str:
         # `_+` per riassorbire l'imbottitura messa da `salva`.
-        return re.sub(
-            r"__TABELLA_(\d+)__+",
-            lambda m: tabelle[int(m.group(1))],
-            testo,
-        )
+        def rimpiazza(m: re.Match) -> str:
+            idx = int(m.group(1))
+            return blocchi[idx][1]
+
+        return RE_MARCA_BLOCCO.sub(rimpiazza, testo)
 
     chunks = [ripristina(c) for c in chunks]
     return chunks or [fonte], stats
@@ -527,6 +550,7 @@ def scrivi_nota(
     modello: str,
     caratteri_fonte: int,
     metriche: dict,
+    frazione_segnaposti: float = 0.0,
 ) -> Path:
     originale = s["nota"].read_text(encoding="utf-8")
     m = re.match(r"^---\n(.*?)\n---\n", originale, re.S)
@@ -536,7 +560,10 @@ def scrivi_nota(
         f"modello: {json.dumps(modello, ensure_ascii=False)}",
         f"caratteri_fonte: {caratteri_fonte}",
         f"numeri_non_verificati: {len(allarmi)}",
+        f"frazione_segnaposti: {frazione_segnaposti:.4f}",
     ]
+    if frazione_segnaposti > SOGLIA_SEGNAPOSTI:
+        aggiunti.append("avviso_segnaposti: true")
     integrale = (documenti.MARKDOWN / f"{nome}.md").as_uri()
     pagine = f"{s['pagina']}" + (f"-{s['pagina_fine']}" if s["pagina_fine"] > s["pagina"] else "")
 
@@ -552,6 +579,14 @@ def scrivi_nota(
         "",
         "## La spiegazione",
         "",
+    ]
+    if frazione_segnaposti > SOGLIA_SEGNAPOSTI:
+        corpo += [
+            "⚠ Questa sezione e' in gran parte formule e tabelle: la spiegazione "
+            "copre solo la prosa.",
+            "",
+        ]
+    corpo += [
         _escapa(spiegazione).strip(),
         "",
     ]
@@ -663,6 +698,8 @@ def processa_sezione(
 ) -> dict | None:
     fonte = _fonte(nome, s["pagina"], s["pagina_fine"])
     n_car = len(re.sub(r"\s+", " ", fonte).strip())
+    sostituiti = sum(len(m.group(0)) for m in RE_BLOCCO.finditer(fonte))
+    frazione_segnaposti = sostituiti / n_car if n_car else 0.0
     if n_car < MIN_FONTE:
         motivo = f"fonte troppo corta: {n_car} caratteri"
         print(f"sezione {s['sezione']} SALTATA: {motivo}")
@@ -706,7 +743,10 @@ def processa_sezione(
             f"{metriche['tok_s']} tok/s, {esito['numeri_non_verificati']} allarmi"
         )
         return esito
-    scrivi_nota(s, nome, spiegazione, punti, materiale, allarmi, versione or modello, n_car, metriche)
+    scrivi_nota(
+        s, nome, spiegazione, punti, materiale, allarmi,
+        versione or modello, n_car, metriche, frazione_segnaposti,
+    )
     stato["sezioni"][str(s["sezione"])] = esito
     print(
         f"sezione {s['sezione']}: nota riscritta in {metriche['secondi']}s "

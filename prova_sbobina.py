@@ -45,6 +45,7 @@ import sbobina
 
 MODELLO = sys.argv[1] if len(sys.argv) > 1 else sbobina.MODELLO
 IDX_TABELLA = 4  # "2.1 Tabella dei dati": pagina col blocco delle CIFRE
+IDX_FORMULA = 6  # "Terza sezione": pagina col recinto formula
 
 
 def assert_nota_della_tabella() -> None:
@@ -77,6 +78,8 @@ def assert_nota_della_tabella() -> None:
     assert sbobina.SEGNAPOSTO_TABELLA in per_modello, "il recinto non e' stato sostituito"
     assert "<!-- tabella" not in per_modello, "il marcatore di tabella e' andato al modello"
     materiale = testo.split("## Materiale originale", 1)[1].split("## Fonte", 1)[0]
+    assert "**Tabella**" in materiale, "il materiale non distingue la tabella"
+    assert "**Formula**" not in materiale, "tabella con etichetta formula"
     for c in prova_documenti.CIFRE:
         assert re.search(rf"\b{re.escape(c)}\b", materiale), f"cifra mancante dal verbatim: {c}"
 
@@ -100,6 +103,146 @@ def assert_nota_della_tabella() -> None:
     if ricalcolo:
         assert re.search(rf"⚠ {len(ricalcolo)} numeri non verificati", testo), "allarme mancante in Fonte"
     print(f"OK nota della sezione {IDX_TABELLA}: verbatim, numeri, forma.")
+
+
+def assert_nota_della_formula() -> None:
+    note = {s["sezione"]: s for s in sbobina.sezioni(SLUG)}
+    s = note[IDX_FORMULA]
+    testo = s["nota"].read_text(encoding="utf-8")
+
+    fonte = sbobina._fonte(SLUG, s["pagina"], s["pagina_fine"])
+    per_modello, _ = sbobina._dividi(fonte)
+    # il recinto e' isolato: al modello va il segnaposto delle formule
+    assert sbobina.SEGNAPOSTO_FORMULA in per_modello, "il recinto formula non e' stato sostituito"
+    assert sbobina.SEGNAPOSTO_TABELLA not in per_modello, "formula sostituita col segnaposto tabella"
+    assert "<!-- formula" not in per_modello, "il marcatore di formula e' andato al modello"
+
+    materiale = testo.split("## Materiale originale", 1)[1].split("## Fonte", 1)[0]
+    assert "**Formula**" in materiale, "il materiale non distingue la formula"
+    assert "**Tabella**" not in materiale, "formula con etichetta tabella"
+    # apice e pedice ricostruiti da documenti.py restano verbatim
+    assert "s^2" in materiale, "apice mancante dal materiale"
+    assert "n_i" in materiale, "pedice mancante dal materiale"
+    # la frazione di segnaposto e' registrata
+    assert "frazione_segnaposti:" in testo, "frontmatter senza frazione_segnaposti"
+
+    print(f"OK nota della sezione {IDX_FORMULA}: formula protetta e verbatim.")
+
+
+def assert_protezione_formule() -> None:
+    """Tabella e formula nella stessa sezione: ciascuna col suo segnaposto,
+    in ordine di documento, entrambe nel materiale verbatim."""
+    tabella = "<!-- tabella pag 1 blocco 1 -->\n```\n| valore |\n| 12345 |\n```"
+    formula = "<!-- formula pag 1 blocco 2 -->\n```\nx_i = y^2 + 1\n```"
+    testo = (
+        "Prima della tabella.\n\n"
+        + tabella
+        + "\n\nPoi la formula.\n\n"
+        + formula
+        + "\n\nDopo la formula."
+    )
+    per_modello, materiale = sbobina._dividi(testo)
+    # ordine di documento
+    assert per_modello.find(sbobina.SEGNAPOSTO_TABELLA) < per_modello.find(
+        sbobina.SEGNAPOSTO_FORMULA
+    ), "ordine dei segnaposti diverso dall'ordine dei recinti"
+    # ciascuno col suo segnaposto
+    assert sbobina.SEGNAPOSTO_TABELLA in per_modello, "tabella non sostituita"
+    assert sbobina.SEGNAPOSTO_FORMULA in per_modello, "formula non sostituita"
+    assert "<!-- tabella" not in per_modello, "marcatore tabella al modello"
+    assert "<!-- formula" not in per_modello, "marcatore formula al modello"
+    # materiale in ordine, distinto per tipo
+    assert materiale.index("**Tabella**") < materiale.index("**Formula**"), (
+        "ordine del materiale diverso dall'ordine dei recinti"
+    )
+    assert tabella in materiale, "tabella mancante dal materiale"
+    assert formula in materiale, "formula mancante dal materiale"
+    print("OK protezione formule: tabella e formula insieme, segnaposti giusti, ordine documento.")
+
+
+def assert_budget_segnaposti() -> None:
+    """La contabilita' del budget vale su segnaposti di lunghezze diverse."""
+    tabella = "<!-- tabella pag 1 blocco 1 -->\n```\n| valore |\n| 12345 |\n```"
+    formula = "<!-- formula pag 1 blocco 2 -->\n```\nx_i = y^2 + 1 + z_j - k^3\n```"
+    paragrafi = []
+    for i in range(8):
+        frase = f"Questo e' il paragrafo numero {i} della prova budget. " * 15
+        paragrafi.append(frase.strip())
+    testo = (
+        "\n\n".join(paragrafi[:4])
+        + "\n\n" + tabella + "\n\n"
+        + "\n\n".join(paragrafi[4:6])
+        + "\n\n" + formula + "\n\n"
+        + "\n\n".join(paragrafi[6:])
+    )
+    budget = 3500
+    chunks, _ = sbobina._chunk_fonte(testo, budget)
+    assert len(chunks) > 1, "la prova budget non si e' divisa"
+    for c in chunks:
+        per_modello, _ = sbobina._dividi(c)
+        assert len(per_modello) <= budget, (
+            f"chunk sfora il budget: {len(per_modello)} > {budget}"
+        )
+        if "<!-- tabella" in c:
+            assert "```" in c, "tabella spezzata"
+        if "<!-- formula" in c:
+            assert "```" in c, "formula spezzata"
+    unito = re.sub(r"\s+", " ", "\n\n".join(chunks))
+    originale = re.sub(r"\s+", " ", testo)
+    assert unito == originale, "la suddivisione ha perso pezzi"
+    print("OK budget segnaposti: ogni chunk sta nel budget, recinti intatti, copertura totale.")
+
+
+def assert_recinto_formula_lungo() -> None:
+    """Un recinto di formula piu' lungo del budget resta indivisibile."""
+    corpo = "\n".join(f"riga {i} della formula lunga" for i in range(200))
+    formula = f"<!-- formula pag 1 blocco 1 -->\n```\n{corpo}\n```"
+    testo = "Introduzione breve.\n\n" + formula + "\n\nConclusione breve."
+    budget = 2000
+    chunks, _ = sbobina._chunk_fonte(testo, budget)
+    for c in chunks:
+        if "<!-- formula" in c:
+            assert c.count("```") == 2, "recinto formula spezzato"
+            assert formula in c, "recinto formula troncato"
+    unito = re.sub(r"\s+", " ", "\n\n".join(chunks))
+    originale = re.sub(r"\s+", " ", testo)
+    assert unito == originale, "divisione con formula lunga ha perso pezzi"
+    print("OK recinto formula lungo: indivisibile e coperto.")
+
+
+def assert_avviso_segnaposti() -> None:
+    """Sezione in gran parte recinti: la nota lo dichiara."""
+    nota_tmp = Path("/tmp/opencode/sbobina_avviso.md")
+    nota_tmp.write_text(
+        "---\n"
+        "tipo: nota\n"
+        "documento: '[[prova]]'\n"
+        "sezione: 99\n"
+        'titolo: \\"Test\\"\n'
+        "pagina: 1\n"
+        "pagina_fine: 1\n"
+        "aliases:\n"
+        "---\n\n"
+        "> estratto\n",
+        encoding="utf-8",
+    )
+    s = {
+        "nota": nota_tmp,
+        "titolo": "Test",
+        "pagina": 1,
+        "pagina_fine": 1,
+    }
+    formula = "<!-- formula pag 1 blocco 1 -->\n```\nx_i = y^2\n```"
+    testo = "Breve.\n\n" + "\n\n".join([formula] * 10)
+    sbobina.scrivi_nota(
+        s, "prova", "spiegazione", "- punto", testo, [], "modello", 1000, {}, 0.75
+    )
+    testo_nota = nota_tmp.read_text(encoding="utf-8")
+    assert "avviso_segnaposti: true" in testo_nota, "avviso non inserito nel frontmatter"
+    assert "frazione_segnaposti: 0.7500" in testo_nota, "frazione non registrata"
+    assert "Questa sezione e' in gran parte formule e tabelle" in testo_nota, "testo avviso mancante"
+    nota_tmp.unlink()
+    print("OK avviso segnaposti: la nota dichiara quando la prosa e' minoranza.")
 
 
 def assert_copertura_rapporto() -> None:
@@ -211,6 +354,10 @@ def main() -> int:
     assert_suddivisione()
     assert_budget_derivato()
     assert_nessuna_dimensione_impossibile()
+    assert_protezione_formule()
+    assert_budget_segnaposti()
+    assert_recinto_formula_lungo()
+    assert_avviso_segnaposti()
     print("generazione del PDF sintetico...")
     prova_documenti.genera_ps()
     prova_documenti.genera_pdf_outline(PDF_SRC, PDF, prova_documenti.OUTLINE)
@@ -248,6 +395,7 @@ def main() -> int:
     assert len(fatte) + len(saltate) == 6, f"fatte {sorted(fatte)}, saltate {sorted(saltate)}"
     assert IDX_TABELLA in {int(x) for x in fatte}, "la sezione della tabella non risulta fatta"
 
+    assert_nota_della_formula()
     assert_copertura_rapporto()
 
     righe = sbobina.rapporto(SLUG)
