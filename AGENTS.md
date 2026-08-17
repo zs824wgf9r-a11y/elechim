@@ -155,6 +155,25 @@ cache del prompt e' l'unica cosa che rende l'assistente usabile (turno in cache
   che aiutano a *costruire* Elechim — opencode, Claude — sono **architetti e
   muratori**: vedono il codice, i log, le metriche e i messaggi di errore,
   **mai** il contenuto di un documento o di una conversazione del proprietario.
+  - **La ricerca sul web si delega sempre a un modello gratuito**
+    (`opencode run -m opencode/deepseek-v4-flash-free`), deciso dal proprietario
+    il 17 agosto 2026 — anche per le ricerche piccole. E' lavoro voluminoso e a
+    basso valore per turno: tante pagine lette per poche righe di conclusione.
+    L'infrastruttura c'e' gia' sul fisso: **searxng** su `127.0.0.1:8888` e
+    **crawl4ai** su `127.0.0.1:11235`, e vanno indicati nel prompt o il modello
+    non sa di averli. Due regole obbligatorie in ogni incarico di ricerca: **ogni
+    affermazione con un URL davvero aperto** (piu' licenza e ultimo commit), e
+    **mai inventare** repository o costanti — un elenco plausibile e falso e'
+    peggio di niente, perche' fa progettare su cose che non esistono. Le
+    affermazioni portanti si **verificano a campione**: quella e' di Claude.
+  - **La spartizione e' 70% opencode, 30% Claude**, deciso dal proprietario il
+    17 agosto 2026. Il codice — implementazioni, refactoring, test nuovi,
+    correzioni — lo scrive **opencode**. A Claude restano il disegno e i vincoli
+    (gli `INCARICO-*.md`), le misure che decidono le soglie, la verifica di cio'
+    che torna, l'integrazione fra piu' sessioni e questa memoria condivisa.
+    E' un tetto, non un modo di dire: se Claude sta scrivendo piu' di un terzo
+    di quello che si produce, la divisione e' sbagliata e si corregge subito,
+    anche a lavoro iniziato. In dubbio su chi fa una cosa, la fa opencode.
   - Corollario pratico: la pipeline documenti si prova su un PDF **sintetico**,
     generato dal codice stesso con testo noto. Cosi' la verifica e'
     un'asserzione esatta invece di un giudizio a occhio, ed e' anche
