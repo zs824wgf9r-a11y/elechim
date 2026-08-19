@@ -21,6 +21,7 @@ OUT = BASE / "stato" / "prova-estrazione-lingua"
 
 # Espressioni regolari per estrarre le citazioni dalle osservazioni.
 RE_CITAZIONI = re.compile(r'"([^"]+)"')
+RE_MSG_ID = re.compile(r"msg_id=(\d+)")
 RE_PAROLA = re.compile(r"\b\w+\b", re.UNICODE)
 
 
@@ -37,12 +38,12 @@ def carica_messaggi(percorso: Path) -> list[dict]:
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
-            "SELECT ruolo, contenuto, ts FROM messaggi ORDER BY ts, id"
+            "SELECT id, ruolo, contenuto, ts FROM messaggi ORDER BY ts, id"
         ).fetchall()
     finally:
         conn.close()
     return [
-        {"ruolo": r["ruolo"], "contenuto": (r["contenuto"] or "").strip(), "ts": r["ts"]}
+        {"id": r["id"], "ruolo": r["ruolo"], "contenuto": (r["contenuto"] or "").strip(), "ts": r["ts"]}
         for r in rows
         if (r["contenuto"] or "").strip()
     ]
@@ -61,6 +62,14 @@ def estrai_citazioni(osservazione: str) -> list[str]:
         pulito = pulito[len("EXPLICIT:"):]
     pulito = pulito.strip()
     return [pulito] if pulito else []
+
+
+def estrai_msg_id(osservazione: str) -> int | None:
+    """Restituisce l'id del messaggio d'origine se presente."""
+    m = RE_MSG_ID.search(osservazione)
+    if m:
+        return int(m.group(1))
+    return None
 
 
 def finestre_parole(testo: str, min_parole: int, max_parole: int) -> list[str]:
@@ -98,7 +107,7 @@ def trova_corrispondenza(query: str, testo: str) -> int:
     return 0
 
 
-def attribuisci(citazione: str, messaggi: list[dict]) -> tuple[str | None, int]:
+def attribuisci(citazione: str, messaggi: list[dict], msg_id: int | None = None) -> tuple[str | None, int]:
     """Restituisce (ruolo, lunghezza_corrispondenza).
 
     Criterio:
@@ -107,7 +116,35 @@ def attribuisci(citazione: str, messaggi: list[dict]) -> tuple[str | None, int]:
     2. scegli il ruolo con la corrispondenza piu' lunga;
     3. se la lunghezza massima e' inferiore alla soglia (20 caratteri o 4 parole),
        l'osservazione e' non attribuita.
+
+    Se msg_id e' fornito, cerca solo nel messaggio con quell'id. Questo e' il
+    caso dell'estrazione deterministica, dove il fatto e' annotato con la sua
+    origine e l'attribuzione e' 0 per costruzione.
     """
+    if msg_id is not None:
+        for m in messaggi:
+            if m["id"] == msg_id:
+                # L'estrazione deterministica fornisce il testo verbatim e l'id
+                # del messaggio d'origine. Verifichiamo che ci sia davvero, anche
+                # solo una parola, perche' il fatto e' per costruzione del
+                # proprietario.
+                q = normalizza(citazione)
+                t = normalizza(m["contenuto"])
+                if q and q in t:
+                    return m["ruolo"], len(q)
+                parole_q = RE_PAROLA.findall(q)
+                parole_t = RE_PAROLA.findall(t)
+                if len(parole_q) == 1 and parole_q[0] in parole_t:
+                    return m["ruolo"], len(parole_q[0])
+                # Fallback a finestre piu' corte della soglia standard.
+                for n in range(min(15, len(parole_q)), 1, -1):
+                    for i in range(len(parole_q) - n + 1):
+                        finestra = " ".join(parole_q[i : i + n])
+                        if finestra in " ".join(parole_t):
+                            return m["ruolo"], len(finestra)
+                return None, 0
+        return None, 0
+
     if len(normalizza(citazione)) < SOGLIA_CARATTERI:
         return None, 0
 
@@ -126,12 +163,32 @@ def attribuisci(citazione: str, messaggi: list[dict]) -> tuple[str | None, int]:
     return None, best_len
 
 
-def leggi_osservazioni(percorso: Path) -> list[str]:
+def leggi_osservazioni(percorso: Path, sezioni: tuple[str, ...] = ("## Fatti", "## Osservazioni")) -> list[str]:
+    """Legge le righe '- ' dalla prima sezione trovata.
+
+    Per i vecchi esperimenti la sezione e' '## Osservazioni'; per
+    l'estrazione deterministica e' '## Fatti'.
+    """
+    testo = percorso.read_text(encoding="utf-8")
+    righe = testo.splitlines()
+
+    # Trova l'inizio della prima sezione richiesta.
+    inizio = -1
+    for i, riga in enumerate(righe):
+        if riga.strip() in sezioni:
+            inizio = i
+            break
+    if inizio < 0:
+        return []
+
     out = []
-    for riga in percorso.read_text(encoding="utf-8").splitlines():
-        riga = riga.strip()
-        if riga.startswith("- "):
-            out.append(riga[2:].strip())
+    for riga in righe[inizio + 1 :]:
+        r = riga.strip()
+        if r.startswith("#"):
+            # Nuova sezione: fermati.
+            break
+        if r.startswith("- "):
+            out.append(r[2:].strip())
     return out
 
 
@@ -171,6 +228,7 @@ def main() -> int:
         "originale": ("", BASE / "stato" / "prova-estrazione"),
         "variante_a": ("-a", OUT),
         "variante_b": ("-b", OUT),
+        "deterministica": ("", BASE / "stato" / "prova-estrazione-deterministica"),
     }
 
     riassunto = {}
@@ -188,9 +246,10 @@ def main() -> int:
             conteggi = {"user": 0, "assistant": 0, "non_attribuito": 0}
             for o in osservazioni:
                 citazioni = estrai_citazioni(o)
+                msg_id = estrai_msg_id(o)
                 ruolo = None
                 for c in citazioni:
-                    ruolo, _ = attribuisci(c, messaggi)
+                    ruolo, _ = attribuisci(c, messaggi, msg_id=msg_id)
                     if ruolo:
                         break
                 if ruolo == "user":
