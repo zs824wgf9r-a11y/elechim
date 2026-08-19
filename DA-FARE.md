@@ -10,6 +10,235 @@ Convenzione: ✅ fatto e verificato · 🔧 in lavorazione · ⬜ da fare ·
 
 ---
 
+## DOVE SIAMO — 20 agosto 2026: il progetto cambia bersaglio
+
+Deciso dal proprietario il 19-20 agosto, discutendo a cosa serve davvero
+Elechim. **A ottobre 2026 comincia una magistrale in Data Science.** Il primo
+anno e' tutto obbligatorio, 54 CFU, e si divide cosi' per come si impara:
+
+| natura | CFU | dove pesa |
+|---|---:|---|
+| coding e sistemi | 24 | dove gli strumenti che ha gia' bastano |
+| **matematica** (apprendimento statistico, ottimizzazione) | 18 | **dove deve essere bravo lui** |
+| discorsivo (diritto, gestione) | 12 | dove un modello locale regge quasi da solo |
+
+Il piano di studi completo non entra in questo file: e' un documento
+d'ateneo e i nomi esatti dei corsi identificano la persona.
+
+**Sette settimane a ottobre.** Tutto quello che non serve allo studio slitta.
+
+### Cosa vuole il proprietario, con le sue parole
+
+> «Una fonte di conoscenza rapida. Non so qualcosa e mi aiuta a capirla meglio.
+> Non come mezzo di studio. Una chat e piu' in la' un terminale sempre con me,
+> pronto a rispondere alle mie domande e salvarle in degli appunti per poi unire
+> i pezzi. Un sistema che quando prende una nota ci costruisce attorno il resto
+> e i pezzi mancanti. Poi la notte o in idle lo trasforma e lo elabora, mette
+> insieme i pezzi anche con quelli gia' presenti. Un RAG adattato allo studio ma
+> attivo e non passivo.»
+
+E: «uno studio facile e pratico che anche un bambino riesce a capire», «qualcosa
+che non mi annoi e che mi aiuti a rimanere concentrato».
+
+**Tira, non spinge.** Non un sistema che propone sessioni di studio: un sistema
+che risponde quando lo interroghi e lavora da solo nel frattempo.
+
+### Le decisioni prese, da non rimettere in discussione
+
+1. **Tutto in locale, senza eccezioni.** Nessun LLM in cloud, neanche per le
+   domande che non toccano documenti. Esce **solo** una query di ricerca verso i
+   motori, via searxng. Le pagine scaricate entrano nel corpus, mai il contrario.
+   La regola estesa sta in `AGENTS.md`.
+2. **Il modello non risponde mai dalla sua testa.** Risponde solo su passaggi che
+   ha davanti. Se il corpus non basta, si cerca sul web e la pagina scaricata
+   diventa il passaggio. «Non ho una fonte» e' una risposta legittima. E' questa
+   regola che rende utilizzabile un 8B su materiale che non conosce.
+3. **Tre livelli, non due.** Il costo del Mac non e' la CPU, e' la cache.
+   - `gemma-4` sul Mac: **solo** parlare col proprietario. Niente lavoro.
+   - `qwen3:8b` sul fisso, GPU: tutta la generazione (risposte di studio,
+     fusioni, orfani).
+   - un **4B sulla CPU** del fisso: i lavori a risposta chiusa, in volume.
+   Il piccolo va in CPU perche' la VRAM non basta: 8188 MiB totali, 1573 gia'
+   occupati, `qwen3:8b` ne prende 5,2 GB. Un 4B accanto non ci sta. Sulla CPU
+   (Ryzen 7 5700X, 55 GB liberi) i lavori a risposta chiusa emettono 1-5 token,
+   quindi la lentezza non si manifesta — **e il piccolo esce dal mutex GPU**,
+   cosi' puo' verificare mentre la GPU macina. Da misurare: il prefill in CPU.
+   Modello consigliato `qwen3:4b`, stessa famiglia dell'8B, stessi prompt.
+4. **Il piccolo fa i lavori a risposta chiusa, il grande quelli a risposta
+   aperta.** Chiuso = c'e' una risposta giusta e si puo' controllare: riscrivere
+   la domanda in termini di ricerca, scegliere i passaggi pertinenti, estrarre le
+   affermazioni verificabili, etichettare la verifica web
+   (`conferma`/`smentisce`/`non dice`), riassumere una pagina scaricata. Il
+   vantaggio nascosto: **quegli output sono misurabili**, la prosa no.
+5. **Due chat separate, due bot veri** (non una modalita' che si dimentica).
+   - *cavolate*: Elechim di oggi, **invariato**. `DEFINIZIONI` non si tocca,
+     nessuna cache invalidata.
+   - *studio*: canale nuovo, cervello sul fisso.
+   Costa zero perche' non condividono la cache. E soprattutto: **la separazione
+   sostituisce il filtro intelligente** — chat studio = si salva tutto, chat
+   cavolate = non si salva niente. Il giudizio «questa domanda merita?» sparisce,
+   l'ha gia' dato il proprietario scegliendo quale chat aprire. E' il pezzo piu'
+   fragile del disegno, eliminato da una scelta di prodotto.
+6. **Niente Honcho per questo.** Sono due sistemi diversi: Honcho e' memoria
+   episodica *sul proprietario* (attribuzione, timeline — il problema col 36,6%
+   di attribuzione sbagliata). Il RAG di studio recupera *passaggi* da materiale
+   in markdown: nessuna attribuzione, nessun fatto personale. Il secondo non ha
+   bisogno del primo, e nemmeno di embedding per la v1 (2,4 MB si scorrono in
+   millisecondi; `bge-m3` non e' neanche installato).
+
+### Cosa si e' scoperto guardando il corpus, il 20 agosto
+
+**Struttura e contenuto sono separati, e si uniscono gratis.**
+
+```
+markdown/dsml.md      1,4 MB    contenuto senza struttura (0 titoli `##`)
+~/Obsidian/30-Note/   224 note  struttura senza contenuto (mediana 936 byte)
+```
+
+Le note sono segnalibri con un estratto troncato. Il markdown non ha titoli: le
+176 righe che iniziano con `#` sono **commenti Python** finiti nel testo senza
+recinto. Ma il frontmatter delle note porta `sezione`/`pagina`/`pagina_fine` e
+il markdown porta i marcatori `<!-- pag N -->`. Misurato:
+
+```
+223 sezioni con pagina · coprono 1-533 · buchi fra sezioni consecutive: 0
+```
+
+Ogni pagina appartiene a esattamente una sezione. **Il recupero a due stadi si
+costruisce da quello che c'e' gia': non manca il corpus, mancava la giunzione.**
+
+Conseguenza pratica: **per collaudare il RAG non serve un PDF piu' piccolo.**
+DSML era «troppo grande» per la *generazione* (4 ore di GPU), non per il
+recupero, che non rimacina niente. Anzi: su dieci pagine qualunque ricerca
+sembra funzionare. Un PDF piccolo serve solo per collaudare l'**ingestione** —
+li' si usa il capitolo 1 ritagliato da DSML, perche' esiste gia' la versione
+buona macinata dal libro intero come riferimento.
+`Basic_Statistics_2007.pdf` resta il caso ostile: 10 pagine, **zero titoli**
+(sono tipografici, non strutturali), su cui la rilevazione deve dire «non ci
+sono» invece di inventarli.
+
+### Il canale studio — i sei pezzi
+
+Il pezzo 1 e' scritto: `INCARICO-studio-recupero.md`. Gli altri cinque sono
+progettati qui e vanno scritti come incarichi quando il precedente e'
+consegnato e misurato.
+
+**1. Recupero (deterministico).** Giunzione sezioni<->pagine, ricerca a due
+stadi, CLI. Niente modelli, niente GPU, niente rete. *Incarico scritto.*
+
+**2. Il ciclo domanda -> risposta -> registro.** La domanda va al fisso;
+recupero locale; se non trova, searxng + crawl4ai e la pagina diventa il
+passaggio; `qwen3:8b` risponde **solo** sui passaggi, con riferimento. Tutto
+finisce in `stato/registro.sqlite` (domanda, passaggi, risposta, fonti) —
+**fuori dal vault**, altrimenti fra un mese la ricerca di Obsidian pesca 400
+scarti. Tetto di latenza: **30 s** a fisso sveglio. Da misurare a parte: la
+prima domanda dopo il sonno, che paga il magic packet.
+
+**3. Il bot studio.** Secondo token BotFather, processo separato. La chat di
+oggi non si tocca.
+
+**4. `/elabora` e la notte.** Un solo codice, due inneschi (il timer e il
+comando): due implementazioni della stessa cosa divergono, e quella che gira
+meno marcisce in silenzio.
+   - **preventivo prima di partire**, come intervallo e non come numero secco:
+     mediana storica delle durate reali per categoria x quanti ce ne sono. Il
+     punto di partenza e' la misura di `sbobina.py`: 6 sezioni in 323 s, ~54 s a
+     pezzo su `qwen3:8b`. La verifica web va contata a parte: gira su CPU e
+     rete, **non occupa la GPU e non blocca le domande**.
+   - **il lock GPU si prende per singola nota, non per l'intera sessione.**
+     Diverso da `sbobina.py`, che lo tiene per ore. Cosi' una domanda si infila
+     fra una nota e l'altra: di pomeriggio il proprietario sta studiando proprio
+     mentre l'elaborazione gira.
+   - **`/elabora` aspetta Syncthing.** `~/Obsidian` e' una cartella Syncthing e
+     il fisso di mattina dorme. Scenario reale: appunti presi in universita' sul
+     portatile, il fisso dorme e non li riceve; alle 15 `/elabora` lo sveglia,
+     parte subito, guarda un vault vecchio di un giorno e dice «niente da fare».
+     Fallimento silenzioso, il guasto che qui si e' gia' ripetuto tre volte.
+     Quindi: sveglia, **attende che Syncthing si dichiari allineato** (API locale
+     su :8384, serve la chiave dal config) con un tetto di tempo, e **dichiara
+     sempre il conteggio di cio' che ha visto** — «14 in sospeso» fa notare
+     subito se ne mancano, «0» dice che qualcosa non ha sincronizzato.
+   - **il filtro, due meccanismi per due casi.** `00-Inbox/` e' un nastro
+     trasportatore: il proprietario ci butta le cose, il sistema elabora, scrive
+     in `50-Studio/` e **sposta il suo file, intatto, in `30-Note/`**. L'Inbox si
+     svuota e il progresso si vede — la stessa convenzione di `documenti/in/`.
+     Per gli appunti gia' in `30-Note/` che lui rimette mano: **impronta del
+     testo**, in sospeso = impronta cambiata. Non si sposta niente: spostare le
+     note permanenti rompe link e preferiti, ed e' piu' invasivo che scriverci
+     dentro. Il conteggio del preventivo esce gratis da questa stessa scansione.
+
+**5. La consegna.** Sono tre, con tempi e destinatari diversi:
+
+| cosa | dove | quando | chi inizia |
+|---|---|---|---|
+| la risposta | nello stesso canale della domanda | subito, <=30 s | il proprietario |
+| la nota | vault, `50-Studio/` | **in silenzio** | nessuno |
+| il lavoro notturno | una rassegna | **8:00** | il sistema |
+
+   Il salvataggio e' **muto per progetto**: una notifica per ogni cosa salvata e
+   in una settimana il bot e' silenziato. La rassegna e' un **indice di cosa e'
+   cambiato**, quattro righe con una fine visibile, non il contenuto.
+   **La smentita e' l'unica cosa che non aspetta**: se la verifica notturna
+   trova sbagliata un'affermazione gia' salvata, arriva subito — quella nota
+   potrebbe essere gia' stata studiata. Una nota nuova non letta e' un'occasione
+   persa, una nota sbagliata gia' in testa e' un danno. E **non si corregge di
+   nascosto**: resta, con la smentita accanto e la fonte.
+
+**6. L'elaborazione notturna vera.** Il 4B passa il registro e decide cosa
+merita, quali frammenti parlano della stessa cosa, quali affermazioni verificare.
+Il grande scrive: sintesi dei frammenti, pezzo mancante di un orfano — **solo su
+materiale gia' selezionato e verificato dal piccolo**.
+   - **I pezzi mancanti hanno gia' un nome e il codice li conta gia'**:
+     `_wikilink_risolti()` in `documenti.py:1204` confronta ogni `[[link]]`
+     contro tutto il vault. **I link orfani sono i pezzi mancanti**, e sono la
+     lista di lavoro della notte, calcolata gratis e senza modello. Oggi li
+     conta per il rapporto: farglieli **elencare** e' poche righe.
+   - **Mai cancellare, mai riscrivere l'esistente.** Una sintesi nuova che linka
+     i frammenti, non al posto dei frammenti. Se il consolidamento sbaglia si
+     perde una nota in piu', non il lavoro di un mese.
+   - **Le cartelle del proprietario restano in sola lettura**, per costruzione.
+     Vale doppio ora che il sistema scrive da solo mentre lui dorme.
+
+**Dipendenza che diventa bloccante**: il ciclo notturno ha bisogno che il fisso
+sia sveglio di notte, e oggi dorme dopo tre ore. Il Mac e' sempre acceso e
+`mac/risveglio.py` manda gia' il magic packet: **il Mac sveglia il fisso alle 3,
+il fisso lavora, poi torna a dormire**. Ma il lavoro deve prendere
+`energia.blocco` per tutta la durata. La sezione 8-bis smette di essere «da
+progettare con calma»: e' una dipendenza del pezzo 4.
+
+### Ruoli, dal 20 agosto
+
+- **opencode** costruisce (regola del 70/30, invariata).
+- **agy** rivede, in `--mode plan`. Motivo: in headless i suoi tool sono
+  auto-negati e le `permissions.allow` non sono ancora configurate (7-quinquies),
+  ma in sola lettura non gli serve alcun permesso. Revisione indipendente a
+  costo zero, senza toccare `settings.json`.
+- **Claude** progetta, misura, verifica e supervisiona.
+
+I lanci passano dal guardiano (`guardiano.esegui`, che ha gia' gli adattatori
+per entrambi i motori): il 17 agosto tre sessioni su tre sono morte senza
+consegnare e nessuno se n'e' accorto fino al giorno dopo.
+
+### Cosa slitta, e va detto chiaro
+
+Non sono cancellati, sono dopo ottobre o dopo che il canale studio funziona:
+
+- **le 4 ore di sbobina su 214 sezioni** — producono un magazzino, e il
+  magazzino non era il problema. Resta valida la correzione `CAR_PER_TOKEN`
+  (1-ter) per quando si riprendera';
+- le figure (`INCARICO-figure.md`), i pensieri (`INCARICO-pensieri.md`),
+  Honcho / fase 3, Docling, `documenti/originali/`;
+- `TOOL-DEFINITIVI.md`: i quattro tool restano fermi. Il canale studio non
+  tocca `DEFINIZIONI` e non paga cache — e' proprio il motivo per cui e' un bot
+  separato invece che un tool.
+
+**Tronconi lasciati aperti il 17-18 agosto**, da chiudere o dichiarare morti:
+`INCARICO-figure.md` (nessun rapporto), `INCARICO-lezioni.md` (`LESSONS.md` non
+esiste), `INCARICO-salute.md` (rapporto scritto, `salute.py` mai nato).
+
+---
+
+
 ## DOVE SIAMO — 17 agosto 2026, pomeriggio
 
 Fatti oggi i passi 1 e 2 della sequenza qui sotto, piu' una riparazione che non

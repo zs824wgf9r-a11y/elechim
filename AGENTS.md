@@ -133,6 +133,27 @@ cache del prompt e' l'unica cosa che rende l'assistente usabile (turno in cache
 
 ## Regole non negoziabili — violarle rompe cose che non danno errore
 
+- **Tutto in locale. Nessun LLM in cloud, mai** — neanche per le domande che non
+  toccano documenti, neanche "solo per provare". Deciso dal proprietario il 20
+  agosto 2026, quando il progetto ha preso come bersaglio lo studio. Il confine
+  esatto, perche' fra un mese "in locale" sara' ambiguo:
+  - nessun modello remoto risponde a nulla: i modelli sono `gemma-4` sul Mac e
+    quelli su ollama sul fisso;
+  - nessun documento, nota o appunto del proprietario esce dalla rete di casa;
+  - **esce solo una query di ricerca** verso i motori, via SearXNG, ed e' l'unica
+    cosa che esce;
+  - le pagine scaricate da `crawl4ai` **entrano** nel corpus; niente va nella
+    direzione opposta.
+  - Corollario per chi costruisce: siccome il modello che risponde e' piccolo,
+    **non risponde mai dalla sua testa**. Risponde solo su passaggi che ha
+    davanti — recuperati in locale o scaricati al momento. Se non c'e' fonte, la
+    risposta e' "non ho una fonte". E' questa regola, non la taglia del modello,
+    a rendere utilizzabile un 8B su materia che non conosce.
+  - Vale anche per gli agenti da riga di comando (opencode, `agy`): possono
+    girare su modelli remoti perche' lavorano sul **codice**, mai sul contenuto
+    dei documenti del proprietario. Vedi `opencode-collaboratore` in
+    `dividere-il-lavoro-con-opencode`: architetto e muratore, mai operaio.
+
 - **`DEFINIZIONI` (le descrizioni dei tool) devono restare identiche byte per
   byte** nelle due copie, fisso e Mac. TurboFieldfare riusa la cache solo se
   `entry.tools == request.tools`: cambiare una virgola azzera il prefill
