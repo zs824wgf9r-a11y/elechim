@@ -321,6 +321,105 @@ lanciarlo**: vedi 1-ter, `CAR_PER_TOKEN` va corretto prima.
 
 ---
 
+## 1-quinquies. La sospensione ha mangiato 11 ore, e il guardiano non l'ha vista ⬜ DA CORREGGERE
+
+Pagata la notte del **20 agosto 2026**. Due difetti distinti, uno dentro l'altro.
+
+### `energia.blocco` non impedisce la sospensione. Mai l'ha impedita.
+
+```
+00:53:00  lanciata la sessione studio-recupero, tre blocchi energia attivi
+01:22:52  systemd-logind: The system will suspend now!
+12:29:28  resume — 11 ore e 7 minuti dopo
+```
+
+`energia.blocco()` scrive un file in `stato/blocca/` che viene letto **solo** da
+`motivi_per_restare_svegli()` in `energia.py:282`, cioe' dalla decisione di
+sospensione **di Elechim**. logind e KDE non lo vedono. Verificato con
+`systemd-inhibit --list` mentre i tre blocchi erano attivi: **zero inibitori in
+modalita' `block` sul sleep**. A sospendere e' stato PowerDevil.
+
+E' la sezione 8-bis che si avvera: «il fisso puo' addormentarsi sotto un lavoro
+vivo... finora e' andata bene solo perche' c'era qualcuno alla scrivania».
+Quella notte non c'era nessuno. La ronda del codice l'aveva confermato alle
+01:10, **dodici minuti prima del guasto**: «lavori lunghi lanciati a mano non
+prendono `energia.blocco`... non ho trovato un wrapper generico».
+
+**La correzione, gia' applicata per le sessioni a mano** (`tieni_sveglio.py`):
+
+```
+systemd-inhibit --what=sleep:idle --mode=block --who=Elechim \
+    --why="..." <comando>
+```
+
+**Cosa resta da fare**: `energia.blocco()` deve prendere *anche* un inibitore
+logind, non solo scrivere il suo file. Oggi ogni chiamante che voglia davvero
+restare sveglio deve saperlo e aggiungerlo a mano — cioe' la trappola e' ancora
+armata per il prossimo. Riguarda `documenti.py` e `sbobina.py`, che oggi
+credono di essere protetti e non lo sono.
+
+### Il guardiano non vede una sessione che muore attraverso una sospensione
+
+Peggio del primo, perche' e' nello strumento costruito apposta per accorgersi
+che una sessione muore in silenzio.
+
+`guardiano.esegui` misura `silenzio_max` e `durata_max` con `time.monotonic()`.
+**Su Linux l'orologio monotonico non avanza durante la sospensione.** Dopo 11
+ore di sonno il guardiano credeva fossero passati 30 minuti: il tetto di 90
+minuti non e' mai scattato, e la sessione ha continuato a emettere heartbeat
+locali dal server opencode mentre il flusso verso il modello era morto da ore.
+
+```
+ultimo evento utile:  t=140s   00:55:20
+poi:                  120 server.heartbeat, per 11 ore
+esito del guardiano:  nessuno, la credeva viva
+```
+
+E' la stessa classe di guasto di `OnUnitActiveSec` che non avanza durante la
+sospensione (gia' in `README.it.md` fra le lezioni), ricomparsa altrove.
+
+**Correzione**: affiancare a `monotonic()` un controllo su `time.time()`, che la
+sospensione la attraversa. Se i due orologi divergono di piu' di qualche
+secondo, c'e' stata una sospensione e la sessione va dichiarata inaffidabile —
+non ripresa, **abortita**: dopo undici ore la connessione al modello e' morta
+comunque.
+
+**Lezione generale, la terza di questa famiglia**: un timeout misurato con
+`monotonic()` su una macchina che puo' dormire non e' un timeout. Vale per il
+guardiano, per i timer systemd e per qualunque cosa scriveremo dopo.
+
+---
+
+## 1-sexies. `lavoro.py chiudi` non ha mai funzionato ⬜ CORREZIONE DI UNA RIGA
+
+Trovato il 20 agosto provando a chiudere il worktree della ronda.
+
+```
+lavoro.py:227   conosciuto = any(wt.get("branch", "") == branch for wt in wts)
+```
+
+`_nome_branch()` produce `lavoro/<nome>`, ma `git worktree list --porcelain`
+scrive `refs/heads/lavoro/<nome>`. Il confronto e' **sempre falso**, quindi
+`chiudi` muore su «non e' un worktree git noto» per **qualunque** worktree, e la
+fusione non avviene mai. Il worktree della ronda e' stato fuso a mano.
+
+Non e' un caso limite: e' meta' del ciclo di vita dello strumento, e nessuno se
+n'era accorto perche' finora nessun worktree era mai stato chiuso.
+
+**Correzione**: confrontare togliendo il prefisso (`removeprefix("refs/heads/")`)
+su entrambi i lati. Da fare insieme al resto dei rilievi della ronda.
+
+**Attenzione quando si chiude a mano**: i symlink condivisi (`stato/`,
+`markdown/`, `archivio/`, `.venv`) vanno rimossi **prima** di
+`git worktree remove --force`, altrimenti si rischia di cancellare i bersagli
+invece dei collegamenti. `lavoro.py` lo fa apposta (riga 241) e chi lo aggira
+deve ricordarsene: `find <worktree> -maxdepth 2 -type l -delete`.
+
+**Nota per la ronda**: `lavoro.py` era nel perimetro dichiarato e questo difetto
+non e' stato trovato. Utile per calibrare quanto fidarsi del prossimo giro.
+
+---
+
 ## 1-ter. Il margine di contesto e' stato speso tutto ⬜ DA CORREGGERE, prima delle 4 ore
 
 Trovato il 17 agosto verificando la misura B di `RAPPORTO-sbobina-formule.md`. **Il
